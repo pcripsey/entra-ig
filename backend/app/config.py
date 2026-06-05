@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     max_retry_attempts: int = Field(default=5, alias='MAX_RETRY_ATTEMPTS')
     max_retry_delay_seconds: int = Field(default=32, alias='MAX_RETRY_DELAY_SECONDS')
     membership_concurrency: int = Field(default=4, alias='MEMBERSHIP_CONCURRENCY')
+    schedule_enabled: bool = Field(default=False, alias='SCHEDULE_ENABLED')
+    schedule_interval_minutes: int = Field(default=60, alias='SCHEDULE_INTERVAL_MINUTES')
     export_base_dir: Path = Field(default=Path('data/exports'), alias='EXPORT_BASE_DIR')
     database_path: Path = Field(default=Path('data/app.db'), alias='DATABASE_PATH')
     log_file_path: Path = Field(default=Path('logs/app.log'), alias='LOG_FILE_PATH')

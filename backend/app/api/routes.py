@@ -8,6 +8,8 @@ from app.models import (
     ConfigResponse,
     HealthResponse,
     LogResponse,
+    ScheduleResponse,
+    ScheduleUpdateRequest,
     SyncRunResponse,
     SyncStartResponse,
     SyncStatusResponse,
@@ -57,6 +59,9 @@ async def get_status(request: Request) -> SyncStatusResponse:
     return SyncStatusResponse(
         active_run_id=sync_service.active_run_id,
         running=sync_service.is_running,
+        schedule_enabled=sync_service.schedule_enabled,
+        schedule_interval_minutes=sync_service.schedule_interval_minutes,
+        next_scheduled_run_at=sync_service.next_scheduled_run_at,
         latest_run=latest_run,
     )
 
@@ -93,3 +98,26 @@ async def get_logs(request: Request, lines: int = 100) -> LogResponse:
 
     content = log_file_path.read_text(encoding='utf-8').splitlines()
     return LogResponse(lines=content[-lines:])
+
+
+@router.get('/schedule', response_model=ScheduleResponse)
+async def get_schedule(request: Request) -> ScheduleResponse:
+    sync_service = request.app.state.sync_service
+    return ScheduleResponse(
+        enabled=sync_service.schedule_enabled,
+        interval_minutes=sync_service.schedule_interval_minutes,
+        next_run_at=sync_service.next_scheduled_run_at,
+        updated_at=sync_service.schedule_updated_at,
+    )
+
+
+@router.put('/schedule', response_model=ScheduleResponse)
+async def update_schedule(request: Request, payload: ScheduleUpdateRequest) -> ScheduleResponse:
+    sync_service = request.app.state.sync_service
+    await sync_service.update_schedule(enabled=payload.enabled, interval_minutes=payload.interval_minutes)
+    return ScheduleResponse(
+        enabled=sync_service.schedule_enabled,
+        interval_minutes=sync_service.schedule_interval_minutes,
+        next_run_at=sync_service.next_scheduled_run_at,
+        updated_at=sync_service.schedule_updated_at,
+    )

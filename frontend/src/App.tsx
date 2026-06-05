@@ -38,11 +38,21 @@ type SyncRunResponse = {
 type SyncStatusResponse = {
   active_run_id: string | null
   running: boolean
+  schedule_enabled: boolean
+  schedule_interval_minutes: number
+  next_scheduled_run_at: string | null
   latest_run: SyncRunResponse | null
 }
 
 type LogResponse = {
   lines: string[]
+}
+
+type ScheduleResponse = {
+  enabled: boolean
+  interval_minutes: number
+  next_run_at: string | null
+  updated_at: string | null
 }
 
 const apiBase = import.meta.env.VITE_API_BASE_URL ?? '/api'
@@ -72,25 +82,33 @@ function App() {
   const [status, setStatus] = useState<SyncStatusResponse | null>(null)
   const [runs, setRuns] = useState<SyncRunResponse[]>([])
   const [logs, setLogs] = useState<string[]>([])
+  const [schedule, setSchedule] = useState<ScheduleResponse | null>(null)
+  const [scheduleEnabled, setScheduleEnabled] = useState(false)
+  const [scheduleIntervalMinutes, setScheduleIntervalMinutes] = useState('60')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [savingSchedule, setSavingSchedule] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const loadDashboard = async () => {
     try {
       setError(null)
-      const [configData, healthData, statusData, runData, logData] = await Promise.all([
+      const [configData, healthData, statusData, runData, logData, scheduleData] = await Promise.all([
         fetchJson<ConfigResponse>('/config'),
         fetchJson<HealthResponse>('/health'),
         fetchJson<SyncStatusResponse>('/status'),
         fetchJson<SyncRunResponse[]>('/runs'),
         fetchJson<LogResponse>('/logs?lines=200'),
+        fetchJson<ScheduleResponse>('/schedule'),
       ])
       setConfig(configData)
       setHealth(healthData)
       setStatus(statusData)
       setRuns(runData)
       setLogs(logData.lines)
+      setSchedule(scheduleData)
+      setScheduleEnabled(scheduleData.enabled)
+      setScheduleIntervalMinutes(String(scheduleData.interval_minutes))
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load dashboard data.')
     } finally {
@@ -117,6 +135,29 @@ function App() {
     } finally {
       setBusy(false)
     }
+
+    const saveSchedule = async () => {
+      try {
+        setSavingSchedule(true)
+        setError(null)
+        const payload = {
+          enabled: scheduleEnabled,
+          interval_minutes: Number(scheduleIntervalMinutes),
+        }
+        const scheduleData = await fetchJson<ScheduleResponse>('/schedule', {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        })
+        setSchedule(scheduleData)
+        setScheduleEnabled(scheduleData.enabled)
+        setScheduleIntervalMinutes(String(scheduleData.interval_minutes))
+        await loadDashboard()
+      } catch (scheduleError) {
+        setError(scheduleError instanceof Error ? scheduleError.message : 'Unable to save schedule.')
+      } finally {
+        setSavingSchedule(false)
+      }
+    }
   }
 
   const summaryCards = useMemo(
@@ -136,8 +177,13 @@ function App() {
         value: status?.latest_run?.status ?? 'No runs yet',
         tone: status?.latest_run?.status === 'completed' ? 'success' : 'neutral',
       },
+      {
+        label: 'Schedule',
+        value: schedule?.enabled ? `Every ${schedule.interval_minutes} min` : 'Disabled',
+        tone: schedule?.enabled ? 'info' : 'neutral',
+      },
     ],
-    [health?.graph_reachable, status?.latest_run?.status, status?.running],
+    [health?.graph_reachable, schedule?.enabled, schedule?.interval_minutes, status?.latest_run?.status, status?.running],
   )
 
   return (
@@ -225,6 +271,46 @@ function App() {
               <dd>{config?.database_path ?? '—'}</dd>
             </div>
           </dl>
+        </article>
+
+        <article className="panel">
+          <div className="panel-header">
+            <h2>Refresh schedule</h2>
+            <span className={`pill ${schedule?.enabled ? 'info' : 'neutral'}`}>
+              {schedule?.enabled ? 'Enabled' : 'Disabled'}
+            </span>
+          </div>
+          <div className="schedule-form">
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={scheduleEnabled}
+                onChange={(event) => setScheduleEnabled(event.target.checked)}
+              />
+              Enable automatic refreshes
+            </label>
+            <label>
+              <span>Interval (minutes)</span>
+              <input
+                type="number"
+                min={5}
+                max={1440}
+                value={scheduleIntervalMinutes}
+                onChange={(event) => setScheduleIntervalMinutes(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Next run</span>
+              <input type="text" disabled value={formatDate(schedule?.next_run_at ?? null)} />
+            </label>
+            <label>
+              <span>Last schedule update</span>
+              <input type="text" disabled value={formatDate(schedule?.updated_at ?? null)} />
+            </label>
+            <button className="secondary-action" onClick={() => void saveSchedule()} disabled={savingSchedule}>
+              {savingSchedule ? 'Saving…' : 'Save schedule'}
+            </button>
+          </div>
         </article>
 
         <article className="panel wide">

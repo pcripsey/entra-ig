@@ -26,6 +26,7 @@ async def lifespan(app: FastAPI):
     await run_store.initialize()
     exporter = GraphExportService(settings)
     sync_service = SyncService(run_store, exporter)
+    await sync_service.initialize()
 
     app.state.settings = settings
     app.state.logger = logger
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI):
     app.state.exporter = exporter
     app.state.sync_service = sync_service
     yield
+    await sync_service.shutdown()
 
 
 app = FastAPI(

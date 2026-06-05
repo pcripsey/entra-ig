@@ -11,6 +11,8 @@ from app.config import Settings
 class RunStore:
     def __init__(self, settings: Settings):
         self._database_path = settings.database_path
+        self._default_schedule_enabled = settings.schedule_enabled
+        self._default_schedule_interval_minutes = settings.schedule_interval_minutes
 
     async def initialize(self) -> None:
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -32,6 +34,27 @@ class RunStore:
                 )
                 '''
             )
+            await db.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS schedule_config (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    enabled INTEGER NOT NULL,
+                    interval_minutes INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                '''
+            )
+            cursor = await db.execute('SELECT COUNT(*) FROM schedule_config')
+            row = await cursor.fetchone()
+            if row[0] == 0:
+                await db.execute(
+                    'INSERT INTO schedule_config (id, enabled, interval_minutes, updated_at) VALUES (1, ?, ?, ?)',
+                    (
+                        int(self._default_schedule_enabled),
+                        self._default_schedule_interval_minutes,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
             await db.commit()
 
     async def create_run(self, run_id: str, status: str) -> None:
@@ -77,3 +100,32 @@ class RunStore:
             cursor = await db.execute('SELECT * FROM sync_runs WHERE id = ?', (run_id,))
             row = await cursor.fetchone()
         return dict(row) if row else None
+
+    async def get_schedule(self) -> dict[str, Any]:
+        async with aiosqlite.connect(self._database_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute('SELECT enabled, interval_minutes, updated_at FROM schedule_config WHERE id = 1')
+            row = await cursor.fetchone()
+        if row is None:
+            return {
+                'enabled': False,
+                'interval_minutes': 60,
+                'updated_at': datetime.now(timezone.utc).isoformat(),
+            }
+        return {
+            'enabled': bool(row['enabled']),
+            'interval_minutes': row['interval_minutes'],
+            'updated_at': row['updated_at'],
+        }
+
+    async def update_schedule(self, *, enabled: bool, interval_minutes: int) -> None:
+        async with aiosqlite.connect(self._database_path) as db:
+            await db.execute(
+                '''
+                UPDATE schedule_config
+                SET enabled = ?, interval_minutes = ?, updated_at = ?
+                WHERE id = 1
+                ''',
+                (int(enabled), interval_minutes, datetime.now(timezone.utc).isoformat()),
+            )
+            await db.commit()

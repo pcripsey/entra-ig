@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ConfigResponse(BaseModel):
@@ -42,6 +42,9 @@ class SyncRunResponse(BaseModel):
 class SyncStatusResponse(BaseModel):
     active_run_id: str | None
     running: bool
+    schedule_enabled: bool
+    schedule_interval_minutes: int
+    next_scheduled_run_at: str | None
     latest_run: SyncRunResponse | None
 
 
@@ -52,3 +55,15 @@ class SyncStartResponse(BaseModel):
 
 class LogResponse(BaseModel):
     lines: list[str]
+
+
+class ScheduleResponse(BaseModel):
+    enabled: bool
+    interval_minutes: int
+    next_run_at: str | None
+    updated_at: str | None = None
+
+
+class ScheduleUpdateRequest(BaseModel):
+    enabled: bool
+    interval_minutes: int = Field(ge=5, le=1440)
