@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "entra-ig"
+version = "0.1.0"
+description = "Microsoft Entra ID export service optimized for OpenText Identity Governance CSV collection."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "aiosqlite>=0.22.0,<1.0.0",
+  "azure-identity>=1.25.0,<2.0.0",
+  "fastapi>=0.136.0,<1.0.0",
+  "msgraph-sdk>=1.58.0,<2.0.0",
+  "pydantic-settings>=2.14.0,<3.0.0",
+  "uvicorn>=0.49.0,<1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28.0,<1.0.0",
+  "pytest>=9.0.0,<10.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
