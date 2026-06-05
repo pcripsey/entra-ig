@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
 type ConfigResponse = {
+  tenant_id: string
+  client_id: string
   tenant_id_present: boolean
   client_id_present: boolean
   client_secret_present: boolean
@@ -55,6 +57,11 @@ type ScheduleResponse = {
   updated_at: string | null
 }
 
+type ConnectionTestResponse = {
+  success: boolean
+  detail: string
+}
+
 const apiBase = import.meta.env.VITE_API_BASE_URL ?? '/api'
 
 async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
@@ -85,9 +92,15 @@ function App() {
   const [schedule, setSchedule] = useState<ScheduleResponse | null>(null)
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
   const [scheduleIntervalMinutes, setScheduleIntervalMinutes] = useState('60')
+  const [tenantId, setTenantId] = useState('')
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [graphScope, setGraphScope] = useState('https://graph.microsoft.com/.default')
+  const [connectionTestResult, setConnectionTestResult] = useState<ConnectionTestResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [savingSchedule, setSavingSchedule] = useState(false)
+  const [testingConnection, setTestingConnection] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const loadDashboard = async () => {
@@ -102,6 +115,9 @@ function App() {
         fetchJson<ScheduleResponse>('/schedule'),
       ])
       setConfig(configData)
+      setTenantId(configData.tenant_id)
+      setClientId(configData.client_id)
+      setGraphScope(configData.graph_scope)
       setHealth(healthData)
       setStatus(statusData)
       setRuns(runData)
@@ -117,11 +133,16 @@ function App() {
   }
 
   useEffect(() => {
-    void loadDashboard()
+    const initialLoad = window.setTimeout(() => {
+      void loadDashboard()
+    }, 0)
     const timer = window.setInterval(() => {
       void loadDashboard()
     }, 15000)
-    return () => window.clearInterval(timer)
+    return () => {
+      window.clearTimeout(initialLoad)
+      window.clearInterval(timer)
+    }
   }, [])
 
   const triggerSync = async () => {
@@ -135,28 +156,49 @@ function App() {
     } finally {
       setBusy(false)
     }
+  }
 
-    const saveSchedule = async () => {
-      try {
-        setSavingSchedule(true)
-        setError(null)
-        const payload = {
-          enabled: scheduleEnabled,
-          interval_minutes: Number(scheduleIntervalMinutes),
-        }
-        const scheduleData = await fetchJson<ScheduleResponse>('/schedule', {
-          method: 'PUT',
-          body: JSON.stringify(payload),
-        })
-        setSchedule(scheduleData)
-        setScheduleEnabled(scheduleData.enabled)
-        setScheduleIntervalMinutes(String(scheduleData.interval_minutes))
-        await loadDashboard()
-      } catch (scheduleError) {
-        setError(scheduleError instanceof Error ? scheduleError.message : 'Unable to save schedule.')
-      } finally {
-        setSavingSchedule(false)
+  const saveSchedule = async () => {
+    try {
+      setSavingSchedule(true)
+      setError(null)
+      const payload = {
+        enabled: scheduleEnabled,
+        interval_minutes: Number(scheduleIntervalMinutes),
       }
+      const scheduleData = await fetchJson<ScheduleResponse>('/schedule', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      })
+      setSchedule(scheduleData)
+      setScheduleEnabled(scheduleData.enabled)
+      setScheduleIntervalMinutes(String(scheduleData.interval_minutes))
+      await loadDashboard()
+    } catch (scheduleError) {
+      setError(scheduleError instanceof Error ? scheduleError.message : 'Unable to save schedule.')
+    } finally {
+      setSavingSchedule(false)
+    }
+  }
+
+  const testConnection = async () => {
+    try {
+      setTestingConnection(true)
+      setError(null)
+      const result = await fetchJson<ConnectionTestResponse>('/connection/test', {
+        method: 'POST',
+        body: JSON.stringify({
+          tenant_id: tenantId,
+          client_id: clientId,
+          client_secret: clientSecret || undefined,
+          graph_scope: graphScope,
+        }),
+      })
+      setConnectionTestResult(result)
+    } catch (connectionError) {
+      setError(connectionError instanceof Error ? connectionError.message : 'Unable to test the connection.')
+    } finally {
+      setTestingConnection(false)
     }
   }
 
@@ -242,35 +284,54 @@ function App() {
 
         <article className="panel">
           <div className="panel-header">
-            <h2>Configuration</h2>
-            <span className="pill neutral">Runtime</span>
+            <h2>Connection configuration</h2>
+            <span className="pill neutral">Env-backed</span>
           </div>
-          <dl className="detail-list">
-            <div>
-              <dt>Tenant ID loaded</dt>
-              <dd>{config?.tenant_id_present ? 'Yes' : 'No'}</dd>
+          <div className="schedule-form">
+            <label>
+              <span>Tenant ID</span>
+              <input type="text" value={tenantId} onChange={(event) => setTenantId(event.target.value)} />
+            </label>
+            <label>
+              <span>Client ID</span>
+              <input type="text" value={clientId} onChange={(event) => setClientId(event.target.value)} />
+            </label>
+            <label>
+              <span>Client secret</span>
+              <input
+                type="password"
+                placeholder={config?.masked_client_secret || 'Enter secret for connection test'}
+                value={clientSecret}
+                onChange={(event) => setClientSecret(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Graph scope</span>
+              <input type="text" value={graphScope} onChange={(event) => setGraphScope(event.target.value)} />
+            </label>
+            <div className="actions-row">
+              <button className="secondary-action" onClick={() => void testConnection()} disabled={testingConnection}>
+                {testingConnection ? 'Testing…' : 'Test connection'}
+              </button>
+              <span className={`pill ${connectionTestResult?.success ? 'success' : 'neutral'}`}>
+                {connectionTestResult ? connectionTestResult.detail : 'Use values above to test Entra access'}
+              </span>
             </div>
-            <div>
-              <dt>Client ID loaded</dt>
-              <dd>{config?.client_id_present ? 'Yes' : 'No'}</dd>
-            </div>
-            <div>
-              <dt>Client secret</dt>
-              <dd>{config?.masked_client_secret || 'Not configured'}</dd>
-            </div>
-            <div>
-              <dt>Scope</dt>
-              <dd>{config?.graph_scope ?? '—'}</dd>
-            </div>
-            <div>
-              <dt>Export path</dt>
-              <dd>{config?.export_base_dir ?? '—'}</dd>
-            </div>
-            <div>
-              <dt>Database path</dt>
-              <dd>{config?.database_path ?? '—'}</dd>
-            </div>
-          </dl>
+            <dl className="detail-list compact">
+              <div>
+                <dt>Runtime secret</dt>
+                <dd>{config?.masked_client_secret || 'Not configured'}</dd>
+              </div>
+              <div>
+                <dt>Export path</dt>
+                <dd>{config?.export_base_dir ?? '—'}</dd>
+              </div>
+              <div>
+                <dt>Database path</dt>
+                <dd>{config?.database_path ?? '—'}</dd>
+              </div>
+            </dl>
+          </div>
         </article>
 
         <article className="panel">

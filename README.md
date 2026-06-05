@@ -12,6 +12,7 @@ Production-ready Microsoft Entra ID export service for OpenText Identity Governa
 - Handles large tenant pagination with the native Microsoft Graph `PageIterator`
 - Retries Graph throttling responses (`HTTP 429`) with exponential backoff
 - Provides a React-based admin console for configuration visibility, connection monitoring, sync execution, and log review
+- Includes connection test controls so admins can validate tenant/client/scope values from the UI before running exports
 - Supports a configurable automatic refresh schedule managed from the admin console
 - Ships as a Docker container with a multi-stage build
 

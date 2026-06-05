@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.models import (
     ConfigResponse,
+    ConnectionTestRequest,
+    ConnectionTestResponse,
     HealthResponse,
     LogResponse,
     ScheduleResponse,
@@ -23,6 +25,8 @@ router = APIRouter()
 async def get_config(request: Request) -> ConfigResponse:
     settings = request.app.state.settings
     return ConfigResponse(
+        tenant_id=settings.tenant_id or '',
+        client_id=settings.client_id or '',
         tenant_id_present=bool(settings.tenant_id),
         client_id_present=bool(settings.client_id),
         client_secret_present=bool(settings.client_secret),
@@ -49,6 +53,20 @@ async def get_health(request: Request) -> HealthResponse:
         detail=detail,
         latest_run_status=latest_run_status,
     )
+
+
+@router.post('/connection/test', response_model=ConnectionTestResponse)
+async def test_connection(request: Request, payload: ConnectionTestRequest) -> ConnectionTestResponse:
+    exporter = request.app.state.exporter
+    success, detail = await exporter.check_connection(
+        overrides={
+            'tenant_id': payload.tenant_id,
+            'client_id': payload.client_id,
+            'client_secret': payload.client_secret,
+            'graph_scope': payload.graph_scope,
+        }
+    )
+    return ConnectionTestResponse(success=success, detail=detail)
 
 
 @router.get('/status', response_model=SyncStatusResponse)

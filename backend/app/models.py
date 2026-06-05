@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class ConfigResponse(BaseModel):
+    tenant_id: str
+    client_id: str
     tenant_id_present: bool
     client_id_present: bool
     client_secret_present: bool
@@ -67,3 +69,15 @@ class ScheduleResponse(BaseModel):
 class ScheduleUpdateRequest(BaseModel):
     enabled: bool
     interval_minutes: int = Field(ge=5, le=1440)
+
+
+class ConnectionTestRequest(BaseModel):
+    tenant_id: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    graph_scope: str | None = None
+
+
+class ConnectionTestResponse(BaseModel):
+    success: bool
+    detail: str

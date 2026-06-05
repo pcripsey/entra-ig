@@ -55,12 +55,12 @@ class GraphExportService:
         if not self._settings.graph_configured:
             raise RuntimeError('TENANT_ID, CLIENT_ID, and CLIENT_SECRET must all be configured.')
 
-        credential = ClientSecretCredential(
+        credential, client = self._create_graph_client(
             tenant_id=self._settings.tenant_id,
             client_id=self._settings.client_id,
             client_secret=self._settings.client_secret,
+            graph_scope=self._settings.graph_scope,
         )
-        client = GraphServiceClient(credentials=credential, scopes=[self._settings.graph_scope])
 
         try:
             users = await self._fetch_users(client)
@@ -70,16 +70,17 @@ class GraphExportService:
         finally:
             await credential.close()
 
-    async def check_connection(self) -> tuple[bool, str]:
-        if not self._settings.graph_configured:
+    async def check_connection(self, *, overrides: dict[str, str | None] | None = None) -> tuple[bool, str]:
+        config = self._resolve_connection_settings(overrides)
+        if not config['tenant_id'] or not config['client_id'] or not config['client_secret']:
             return False, 'Graph credentials are not configured.'
 
-        credential = ClientSecretCredential(
-            tenant_id=self._settings.tenant_id,
-            client_id=self._settings.client_id,
-            client_secret=self._settings.client_secret,
+        credential, client = self._create_graph_client(
+            tenant_id=config['tenant_id'],
+            client_id=config['client_id'],
+            client_secret=config['client_secret'],
+            graph_scope=config['graph_scope'],
         )
-        client = GraphServiceClient(credentials=credential, scopes=[self._settings.graph_scope])
 
         try:
             request_configuration = RequestConfiguration(
@@ -97,6 +98,31 @@ class GraphExportService:
             return False, str(exc)
         finally:
             await credential.close()
+
+    def _resolve_connection_settings(self, overrides: dict[str, str | None] | None = None) -> dict[str, str | None]:
+        overrides = overrides or {}
+        return {
+            'tenant_id': overrides.get('tenant_id') or self._settings.tenant_id,
+            'client_id': overrides.get('client_id') or self._settings.client_id,
+            'client_secret': overrides.get('client_secret') or self._settings.client_secret,
+            'graph_scope': overrides.get('graph_scope') or self._settings.graph_scope,
+        }
+
+    def _create_graph_client(
+        self,
+        *,
+        tenant_id: str | None,
+        client_id: str | None,
+        client_secret: str | None,
+        graph_scope: str | None,
+    ) -> tuple[ClientSecretCredential, GraphServiceClient]:
+        credential = ClientSecretCredential(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        client = GraphServiceClient(credentials=credential, scopes=[graph_scope or self._settings.graph_scope])
+        return credential, client
 
     async def _fetch_users(self, client: GraphServiceClient) -> list[dict[str, str]]:
         request_configuration = RequestConfiguration(
@@ -163,8 +189,6 @@ class GraphExportService:
     async def _fetch_memberships(self, client: GraphServiceClient, groups: list[dict[str, str]]) -> list[dict[str, str]]:
         semaphore = asyncio.Semaphore(self._settings.membership_concurrency)
         membership_pairs: set[tuple[str, str]] = set()
-        membership_lock = asyncio.Lock()
-
         async def collect_group_members(group: dict[str, str]) -> None:
             async with semaphore:
                 group_id = group['id']
@@ -201,8 +225,7 @@ class GraphExportService:
                     collect,
                     operation_name=f'fetch memberships for {group_id}',
                 )
-                async with membership_lock:
-                    self._logger.info('Processed group membership page set for %s', group_id)
+                self._logger.info('Processed group membership page set for %s', group_id)
 
         await asyncio.gather(*(collect_group_members(group) for group in groups))
 
