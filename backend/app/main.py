@@ -51,12 +51,16 @@ async def serve_frontend(full_path: str):
     if full_path.startswith(settings.api_prefix.lstrip('/')):
         raise HTTPException(status_code=404, detail='Not found')
 
-    dist_path = Path(settings.frontend_dist)
-    requested_file = dist_path / full_path if full_path else dist_path / 'index.html'
+    dist_path = Path(settings.frontend_dist).resolve()
+    requested_file = (dist_path / full_path).resolve() if full_path else (dist_path / 'index.html').resolve()
+    try:
+        requested_file.relative_to(dist_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Not found') from exc
     if requested_file.is_file():
         return FileResponse(requested_file)
 
-    index_file = dist_path / 'index.html'
+    index_file = (dist_path / 'index.html').resolve()
     if index_file.is_file():
         return FileResponse(index_file)
 
