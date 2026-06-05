@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
 from app.config import get_settings
@@ -43,25 +44,27 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(router, prefix=get_settings().api_prefix)
+app.mount(
+    '/assets',
+    StaticFiles(directory=str(Path(get_settings().frontend_dist) / 'assets'), check_dir=False),
+    name='frontend-assets',
+)
 
 
-@app.get('/{full_path:path}', include_in_schema=False)
-async def serve_frontend(full_path: str):
+@app.get('/', include_in_schema=False)
+async def serve_frontend_root():
     settings = get_settings()
-    if full_path.startswith(settings.api_prefix.lstrip('/')):
-        raise HTTPException(status_code=404, detail='Not found')
-
     dist_path = Path(settings.frontend_dist).resolve()
-    requested_file = (dist_path / full_path).resolve() if full_path else (dist_path / 'index.html').resolve()
-    try:
-        requested_file.relative_to(dist_path)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail='Not found') from exc
-    if requested_file.is_file():
-        return FileResponse(requested_file)
-
     index_file = (dist_path / 'index.html').resolve()
     if index_file.is_file():
         return FileResponse(index_file)
 
     raise HTTPException(status_code=404, detail='Frontend build assets are not available yet.')
+
+
+@app.get('/{full_path:path}', include_in_schema=False)
+async def serve_frontend_app(full_path: str):
+    settings = get_settings()
+    if full_path.startswith(settings.api_prefix.lstrip('/')) or full_path.startswith('assets/'):
+        raise HTTPException(status_code=404, detail='Not found')
+    return await serve_frontend_root()
