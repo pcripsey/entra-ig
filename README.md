@@ -1,4 +1,4 @@
-# entra-ig
+# entra-ig Beta
 
 Production-ready Microsoft Entra ID export service for OpenText Identity Governance CSV collection.
 
