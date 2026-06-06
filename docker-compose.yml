@@ -1,6 +1,6 @@
 services:
   entra-ig:
-    build: .
+    image: ghcr.io/pcripsey/entra-ig:latest
     ports:
       - "8000:8000"
     env_file:
