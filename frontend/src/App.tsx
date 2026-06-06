@@ -244,7 +244,7 @@ function App() {
     <main className="shell">
       <header className="hero-panel">
         <div>
-          <p className="eyebrow">OpenText JATO-inspired admin console</p>
+          <p className="eyebrow">Admin Console developed by Paul Cripsey</p>
           <h1>Entra ID governance export monitor</h1>
           <p className="hero-copy">
             Manage Microsoft Entra connectivity, monitor export execution, and review CSV collector output
