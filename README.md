@@ -123,7 +123,7 @@ User/scheduler triggers sync
     update sync_runs row (completed / failed)
 ```
 
-### Incremental sync behaviour
+### Incremental sync behavior
 
 | Scenario | Behaviour |
 |---|---|

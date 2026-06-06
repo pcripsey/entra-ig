@@ -38,8 +38,9 @@ class RunStore:
             # Migrate existing installs that lack the sync_type column
             try:
                 await db.execute("ALTER TABLE sync_runs ADD COLUMN sync_type TEXT NOT NULL DEFAULT 'full'")
-            except aiosqlite.OperationalError:
-                pass  # Column already exists
+            except aiosqlite.OperationalError as exc:
+                if 'duplicate column name' not in str(exc).lower():
+                    raise
 
             await db.execute(
                 '''
@@ -55,8 +56,9 @@ class RunStore:
             # Migrate existing installs that lack the sync_type column in schedule_config
             try:
                 await db.execute("ALTER TABLE schedule_config ADD COLUMN sync_type TEXT NOT NULL DEFAULT 'full'")
-            except aiosqlite.OperationalError:
-                pass  # Column already exists
+            except aiosqlite.OperationalError as exc:
+                if 'duplicate column name' not in str(exc).lower():
+                    raise
 
             await db.execute(
                 '''

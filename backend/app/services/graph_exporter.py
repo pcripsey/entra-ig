@@ -153,8 +153,8 @@ class GraphExportService:
             for gid in deleted_group_ids:
                 existing_groups.pop(gid, None)
 
-            users = sorted(existing_users.values(), key=lambda r: (r['userPrincipalName'], r['id']))
-            groups = sorted(existing_groups.values(), key=lambda r: (r['displayName'], r['id']))
+            users = sorted(existing_users.values(), key=lambda r: (r.get('userPrincipalName', ''), r.get('id', '')))
+            groups = sorted(existing_groups.values(), key=lambda r: (r.get('displayName', ''), r.get('id', '')))
 
             memberships = await self._fetch_memberships(client, groups)
             result = self._write_exports(run_id, users, groups, memberships)
@@ -458,8 +458,12 @@ class GraphExportService:
         result: dict[str, dict[str, str]] = {}
         with file_path.open('r', newline='', encoding='utf-8') as csv_file:
             reader = csv.DictReader(csv_file)
+            if reader.fieldnames is None or key_column not in reader.fieldnames:
+                raise ValueError(f'CSV {file_path} is missing expected key column "{key_column}".')
             for row in reader:
-                result[row[key_column]] = dict(row)
+                key = row.get(key_column, '')
+                if key:
+                    result[key] = dict(row)
         return result
 
     def _write_exports(
