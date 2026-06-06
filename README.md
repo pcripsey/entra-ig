@@ -200,22 +200,46 @@ cd frontend && npm run lint && npm run build
 
 ## Docker
 
-### Build
+Pre-built images are published to the GitHub Container Registry on every push to `main`:
 
-```bash
-docker build -t entra-ig .
+```
+ghcr.io/pcripsey/entra-ig:latest
 ```
 
-### Run
+### Run (pre-built image)
 
 ```bash
-docker run --rm -p 8000:8000 --env-file .env -v $(pwd)/data:/app/data -v $(pwd)/logs:/app/logs entra-ig
+docker run --rm -p 8000:8000 --env-file .env \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/logs:/app/logs \
+  ghcr.io/pcripsey/entra-ig:latest
 ```
 
 ### Docker Compose
 
 ```bash
-docker compose up --build
+docker compose up
 ```
 
 The admin console is served by FastAPI at `http://localhost:8000/`, and the API is served under `/api`.
+
+### Unraid
+
+1. In the Unraid UI go to **Docker → Add Container**.
+2. Set **Repository** to `ghcr.io/pcripsey/entra-ig:latest`.
+3. Add the following **Port Mapping**: Container port `8000` → Host port `8000`.
+4. Add two **Path** mappings:
+   - Container path `/app/data` → Host path `/mnt/user/appdata/entra-ig/data`
+   - Container path `/app/logs` → Host path `/mnt/user/appdata/entra-ig/logs`
+5. Add each environment variable from `.env.example` as a **Variable** entry.
+6. Click **Apply**. Unraid will pull the image and start the container without building anything locally.
+
+### Build locally (development)
+
+```bash
+docker build -t entra-ig .
+docker run --rm -p 8000:8000 --env-file .env \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/logs:/app/logs \
+  entra-ig
+```
