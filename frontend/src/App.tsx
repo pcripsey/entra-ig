@@ -26,6 +26,7 @@ type HealthResponse = {
 type SyncRunResponse = {
   id: string
   status: string
+  sync_type: string
   started_at: string
   completed_at: string | null
   users_count: number | null
@@ -42,6 +43,7 @@ type SyncStatusResponse = {
   running: boolean
   schedule_enabled: boolean
   schedule_interval_minutes: number
+  schedule_sync_type: string
   next_scheduled_run_at: string | null
   latest_run: SyncRunResponse | null
 }
@@ -53,6 +55,7 @@ type LogResponse = {
 type ScheduleResponse = {
   enabled: boolean
   interval_minutes: number
+  sync_type: string
   next_run_at: string | null
   updated_at: string | null
 }
@@ -61,6 +64,8 @@ type ConnectionTestResponse = {
   success: boolean
   detail: string
 }
+
+type SyncType = 'full' | 'incremental'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL ?? '/api'
 
@@ -92,6 +97,8 @@ function App() {
   const [schedule, setSchedule] = useState<ScheduleResponse | null>(null)
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
   const [scheduleIntervalMinutes, setScheduleIntervalMinutes] = useState('60')
+  const [scheduleSyncType, setScheduleSyncType] = useState<SyncType>('full')
+  const [syncType, setSyncType] = useState<SyncType>('full')
   const [tenantId, setTenantId] = useState('')
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
@@ -125,6 +132,7 @@ function App() {
       setSchedule(scheduleData)
       setScheduleEnabled(scheduleData.enabled)
       setScheduleIntervalMinutes(String(scheduleData.interval_minutes))
+      setScheduleSyncType((scheduleData.sync_type as SyncType) ?? 'full')
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load dashboard data.')
     } finally {
@@ -149,7 +157,7 @@ function App() {
     try {
       setBusy(true)
       setError(null)
-      await fetchJson('/sync', { method: 'POST' })
+      await fetchJson('/sync', { method: 'POST', body: JSON.stringify({ sync_type: syncType }) })
       await loadDashboard()
     } catch (syncError) {
       setError(syncError instanceof Error ? syncError.message : 'Unable to start sync.')
@@ -165,6 +173,7 @@ function App() {
       const payload = {
         enabled: scheduleEnabled,
         interval_minutes: Number(scheduleIntervalMinutes),
+        sync_type: scheduleSyncType,
       }
       const scheduleData = await fetchJson<ScheduleResponse>('/schedule', {
         method: 'PUT',
@@ -173,6 +182,7 @@ function App() {
       setSchedule(scheduleData)
       setScheduleEnabled(scheduleData.enabled)
       setScheduleIntervalMinutes(String(scheduleData.interval_minutes))
+      setScheduleSyncType((scheduleData.sync_type as SyncType) ?? 'full')
       await loadDashboard()
     } catch (scheduleError) {
       setError(scheduleError instanceof Error ? scheduleError.message : 'Unable to save schedule.')
@@ -221,11 +231,13 @@ function App() {
       },
       {
         label: 'Schedule',
-        value: schedule?.enabled ? `Every ${schedule.interval_minutes} min` : 'Disabled',
+        value: schedule?.enabled
+          ? `Every ${schedule.interval_minutes} min (${schedule.sync_type})`
+          : 'Disabled',
         tone: schedule?.enabled ? 'info' : 'neutral',
       },
     ],
-    [health?.graph_reachable, schedule?.enabled, schedule?.interval_minutes, status?.latest_run?.status, status?.running],
+    [health?.graph_reachable, schedule?.enabled, schedule?.interval_minutes, schedule?.sync_type, status?.latest_run?.status, status?.running],
   )
 
   return (
@@ -239,9 +251,22 @@ function App() {
             paths from one operational dashboard.
           </p>
         </div>
-        <button className="primary-action" onClick={() => void triggerSync()} disabled={busy || status?.running}>
-          {busy || status?.running ? 'Export running…' : 'Run export now'}
-        </button>
+        <div className="hero-actions">
+          <label className="sync-type-label">
+            <span>Sync type</span>
+            <select
+              value={syncType}
+              onChange={(event) => setSyncType(event.target.value as SyncType)}
+              disabled={busy || status?.running}
+            >
+              <option value="full">Full</option>
+              <option value="incremental">Incremental</option>
+            </select>
+          </label>
+          <button className="primary-action" onClick={() => void triggerSync()} disabled={busy || status?.running}>
+            {busy || status?.running ? 'Export running…' : 'Run export now'}
+          </button>
+        </div>
       </header>
 
       {error ? <section className="banner error">{error}</section> : null}
@@ -361,6 +386,16 @@ function App() {
               />
             </label>
             <label>
+              <span>Sync type</span>
+              <select
+                value={scheduleSyncType}
+                onChange={(event) => setScheduleSyncType(event.target.value as SyncType)}
+              >
+                <option value="full">Full — re-fetch everything</option>
+                <option value="incremental">Incremental — delta changes only</option>
+              </select>
+            </label>
+            <label>
               <span>Next run</span>
               <input type="text" disabled value={formatDate(schedule?.next_run_at ?? null)} />
             </label>
@@ -384,6 +419,7 @@ function App() {
               <thead>
                 <tr>
                   <th>Run ID</th>
+                  <th>Type</th>
                   <th>Status</th>
                   <th>Started</th>
                   <th>Completed</th>
@@ -395,12 +431,13 @@ function App() {
               <tbody>
                 {runs.length === 0 ? (
                   <tr>
-                    <td colSpan={7}>No sync runs recorded.</td>
+                    <td colSpan={8}>No sync runs recorded.</td>
                   </tr>
                 ) : (
                   runs.map((run) => (
                     <tr key={run.id}>
                       <td className="mono">{run.id}</td>
+                      <td>{run.sync_type}</td>
                       <td>{run.status}</td>
                       <td>{formatDate(run.started_at)}</td>
                       <td>{formatDate(run.completed_at)}</td>

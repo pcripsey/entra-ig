@@ -13,6 +13,7 @@ from app.models import (
     ScheduleResponse,
     ScheduleUpdateRequest,
     SyncRunResponse,
+    SyncStartRequest,
     SyncStartResponse,
     SyncStatusResponse,
 )
@@ -79,19 +80,20 @@ async def get_status(request: Request) -> SyncStatusResponse:
         running=sync_service.is_running,
         schedule_enabled=sync_service.schedule_enabled,
         schedule_interval_minutes=sync_service.schedule_interval_minutes,
+        schedule_sync_type=sync_service.schedule_sync_type,
         next_scheduled_run_at=sync_service.next_scheduled_run_at,
         latest_run=latest_run,
     )
 
 
 @router.post('/sync', response_model=SyncStartResponse, status_code=202)
-async def start_sync(request: Request) -> SyncStartResponse:
+async def start_sync(request: Request, payload: SyncStartRequest = SyncStartRequest()) -> SyncStartResponse:
     sync_service = request.app.state.sync_service
     try:
-        run_id = await sync_service.start()
+        run_id = await sync_service.start(sync_type=payload.sync_type)
     except SyncAlreadyRunningError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return SyncStartResponse(run_id=run_id, status='queued')
+    return SyncStartResponse(run_id=run_id, status='queued', sync_type=payload.sync_type)
 
 
 @router.get('/runs', response_model=list[SyncRunResponse])
@@ -124,6 +126,7 @@ async def get_schedule(request: Request) -> ScheduleResponse:
     return ScheduleResponse(
         enabled=sync_service.schedule_enabled,
         interval_minutes=sync_service.schedule_interval_minutes,
+        sync_type=sync_service.schedule_sync_type,
         next_run_at=sync_service.next_scheduled_run_at,
         updated_at=sync_service.schedule_updated_at,
     )
@@ -132,10 +135,15 @@ async def get_schedule(request: Request) -> ScheduleResponse:
 @router.put('/schedule', response_model=ScheduleResponse)
 async def update_schedule(request: Request, payload: ScheduleUpdateRequest) -> ScheduleResponse:
     sync_service = request.app.state.sync_service
-    await sync_service.update_schedule(enabled=payload.enabled, interval_minutes=payload.interval_minutes)
+    await sync_service.update_schedule(
+        enabled=payload.enabled,
+        interval_minutes=payload.interval_minutes,
+        sync_type=payload.sync_type,
+    )
     return ScheduleResponse(
         enabled=sync_service.schedule_enabled,
         interval_minutes=sync_service.schedule_interval_minutes,
+        sync_type=sync_service.schedule_sync_type,
         next_run_at=sync_service.next_scheduled_run_at,
         updated_at=sync_service.schedule_updated_at,
     )

@@ -30,6 +30,7 @@ class HealthResponse(BaseModel):
 class SyncRunResponse(BaseModel):
     id: str
     status: str
+    sync_type: str = 'full'
     started_at: str
     completed_at: str | None = None
     users_count: int | None = None
@@ -46,13 +47,19 @@ class SyncStatusResponse(BaseModel):
     running: bool
     schedule_enabled: bool
     schedule_interval_minutes: int
+    schedule_sync_type: str
     next_scheduled_run_at: str | None
     latest_run: SyncRunResponse | None
+
+
+class SyncStartRequest(BaseModel):
+    sync_type: Literal['full', 'incremental'] = 'full'
 
 
 class SyncStartResponse(BaseModel):
     run_id: str
     status: str
+    sync_type: str
 
 
 class LogResponse(BaseModel):
@@ -62,6 +69,7 @@ class LogResponse(BaseModel):
 class ScheduleResponse(BaseModel):
     enabled: bool
     interval_minutes: int
+    sync_type: str
     next_run_at: str | None
     updated_at: str | None = None
 
@@ -69,6 +77,7 @@ class ScheduleResponse(BaseModel):
 class ScheduleUpdateRequest(BaseModel):
     enabled: bool
     interval_minutes: int = Field(ge=5, le=1440)
+    sync_type: Literal['full', 'incremental'] = 'full'
 
 
 class ConnectionTestRequest(BaseModel):

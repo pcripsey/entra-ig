@@ -5,20 +5,25 @@ import csv
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from azure.identity.aio import ClientSecretCredential
 from kiota_abstractions.api_error import APIError
 from kiota_abstractions.base_request_configuration import RequestConfiguration
 from msgraph import GraphServiceClient
 from msgraph.generated.groups.groups_request_builder import GroupsRequestBuilder
+from msgraph.generated.groups.delta.delta_request_builder import DeltaRequestBuilder as GroupsDeltaRequestBuilder
 from msgraph.generated.groups.item.members.members_request_builder import MembersRequestBuilder
 from msgraph.generated.users.users_request_builder import UsersRequestBuilder
+from msgraph.generated.users.delta.delta_request_builder import DeltaRequestBuilder as UsersDeltaRequestBuilder
 from msgraph_core.tasks.page_iterator import PageIterator
 
 from app.config import Settings
 from app.logging_config import LOGGER_NAME
 from app.services.sanitizer import to_csv_value
+
+if TYPE_CHECKING:
+    from app.database import RunStore
 
 import logging
 
@@ -51,9 +56,62 @@ class GraphExportService:
         self._settings = settings
         self._logger = logging.getLogger(LOGGER_NAME)
 
-    async def export(self, run_id: str) -> ExportResult:
+    async def export(self, run_id: str, sync_type: str = 'full', run_store: RunStore | None = None) -> ExportResult:
         if not self._settings.graph_configured:
             raise RuntimeError('TENANT_ID, CLIENT_ID, and CLIENT_SECRET must all be configured.')
+
+        if sync_type == 'incremental' and run_store is not None:
+            return await self._export_incremental(run_id, run_store)
+        return await self._export_full(run_id, run_store)
+
+    async def _export_full(self, run_id: str, run_store: RunStore | None) -> ExportResult:
+        credential, client = self._create_graph_client(
+            tenant_id=self._settings.tenant_id,
+            client_id=self._settings.client_id,
+            client_secret=self._settings.client_secret,
+            graph_scope=self._settings.graph_scope,
+        )
+        try:
+            users, users_delta_link = await self._fetch_users(client)
+            groups, groups_delta_link = await self._fetch_groups(client)
+            memberships = await self._fetch_memberships(client, groups)
+            result = self._write_exports(run_id, users, groups, memberships)
+
+            # Store delta tokens so future incremental syncs have a baseline.
+            if run_store is not None:
+                tokens: dict[str, str] = {}
+                if users_delta_link:
+                    tokens['users'] = users_delta_link
+                if groups_delta_link:
+                    tokens['groups'] = groups_delta_link
+                if tokens:
+                    await run_store.update_delta_tokens(tokens)
+
+            return result
+        finally:
+            await credential.close()
+
+    async def _export_incremental(self, run_id: str, run_store: RunStore) -> ExportResult:
+        """Incremental export using Microsoft Graph delta queries.
+
+        Fetches only changed users and groups since the last sync, merges those
+        changes into the latest exported CSVs, then re-fetches all memberships
+        for the current group set to ensure accuracy.  Falls back to a full
+        export when no stored delta tokens are found or the tokens have expired.
+        """
+        delta_tokens = await run_store.get_delta_tokens()
+        users_token = delta_tokens.get('users')
+        groups_token = delta_tokens.get('groups')
+
+        latest_dir = self._settings.export_base_dir / 'latest'
+        users_csv = latest_dir / 'users.csv'
+        groups_csv = latest_dir / 'groups.csv'
+
+        if not users_token or not groups_token or not users_csv.exists() or not groups_csv.exists():
+            self._logger.info(
+                'No delta tokens or baseline exports found; falling back to full sync for run %s.', run_id
+            )
+            return await self._export_full(run_id, run_store)
 
         credential, client = self._create_graph_client(
             tenant_id=self._settings.tenant_id,
@@ -61,12 +119,56 @@ class GraphExportService:
             client_secret=self._settings.client_secret,
             graph_scope=self._settings.graph_scope,
         )
-
         try:
-            users = await self._fetch_users(client)
-            groups = await self._fetch_groups(client)
+            try:
+                modified_users, deleted_user_ids, new_users_token = await self._fetch_users_delta(
+                    client, users_token
+                )
+                modified_groups, deleted_group_ids, new_groups_token = await self._fetch_groups_delta(
+                    client, groups_token
+                )
+            except APIError as exc:
+                status_code = getattr(exc, 'response_status_code', None)
+                if status_code == 410:
+                    # Delta token expired — start fresh.
+                    self._logger.warning(
+                        'Delta token expired (HTTP 410); falling back to full sync for run %s.', run_id
+                    )
+                    return await self._export_full(run_id, run_store)
+                raise
+
+            # Load existing baseline data.
+            existing_users = self._read_csv(users_csv, 'id')
+            existing_groups = self._read_csv(groups_csv, 'id')
+
+            # Apply user deltas.
+            for user in modified_users:
+                existing_users[user['id']] = user
+            for uid in deleted_user_ids:
+                existing_users.pop(uid, None)
+
+            # Apply group deltas.
+            for group in modified_groups:
+                existing_groups[group['id']] = group
+            for gid in deleted_group_ids:
+                existing_groups.pop(gid, None)
+
+            users = sorted(existing_users.values(), key=lambda r: (r['userPrincipalName'], r['id']))
+            groups = sorted(existing_groups.values(), key=lambda r: (r['displayName'], r['id']))
+
             memberships = await self._fetch_memberships(client, groups)
-            return self._write_exports(run_id, users, groups, memberships)
+            result = self._write_exports(run_id, users, groups, memberships)
+
+            # Persist refreshed delta tokens.
+            new_tokens: dict[str, str] = {}
+            if new_users_token:
+                new_tokens['users'] = new_users_token
+            if new_groups_token:
+                new_tokens['groups'] = new_groups_token
+            if new_tokens:
+                await run_store.update_delta_tokens(new_tokens)
+
+            return result
         finally:
             await credential.close()
 
@@ -124,7 +226,7 @@ class GraphExportService:
         client = GraphServiceClient(credentials=credential, scopes=[graph_scope or self._settings.graph_scope])
         return credential, client
 
-    async def _fetch_users(self, client: GraphServiceClient) -> list[dict[str, str]]:
+    async def _fetch_users(self, client: GraphServiceClient) -> tuple[list[dict[str, str]], str | None]:
         request_configuration = RequestConfiguration(
             query_parameters=UsersRequestBuilder.UsersRequestBuilderGetQueryParameters(
                 select=['id', 'userPrincipalName', 'displayName', 'mail', 'jobTitle', 'department', 'accountEnabled'],
@@ -139,24 +241,43 @@ class GraphExportService:
         rows: list[dict[str, str]] = []
 
         def collect(user: Any) -> bool:
-            rows.append(
-                {
-                    'id': to_csv_value(getattr(user, 'id', None)),
-                    'userPrincipalName': to_csv_value(getattr(user, 'user_principal_name', None)),
-                    'displayName': to_csv_value(getattr(user, 'display_name', None)),
-                    'mail': to_csv_value(getattr(user, 'mail', None)),
-                    'jobTitle': to_csv_value(getattr(user, 'job_title', None)),
-                    'department': to_csv_value(getattr(user, 'department', None)),
-                    'accountEnabled': to_csv_value(getattr(user, 'account_enabled', None)),
-                }
-            )
+            rows.append(self._user_to_row(user))
             return True
 
-        await self._iterate_collection(response, client, collect, operation_name='fetch users')
+        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch users')
         rows.sort(key=lambda row: (row['userPrincipalName'], row['id']))
-        return rows
+        return rows, delta_link
 
-    async def _fetch_groups(self, client: GraphServiceClient) -> list[dict[str, str]]:
+    async def _fetch_users_delta(
+        self, client: GraphServiceClient, delta_token: str
+    ) -> tuple[list[dict[str, str]], list[str], str | None]:
+        """Fetch user changes since the last sync using a stored delta link.
+
+        Returns (modified_rows, deleted_ids, new_delta_link).
+        """
+        builder = UsersDeltaRequestBuilder(client.request_adapter, delta_token)
+        response = await self._run_with_retry(
+            builder.get,
+            operation_name='fetch users delta',
+        )
+
+        modified: list[dict[str, str]] = []
+        deleted_ids: list[str] = []
+
+        def collect(user: Any) -> bool:
+            additional_data = getattr(user, 'additional_data', {}) or {}
+            if '@removed' in additional_data:
+                user_id = to_csv_value(getattr(user, 'id', None))
+                if user_id:
+                    deleted_ids.append(user_id)
+            else:
+                modified.append(self._user_to_row(user))
+            return True
+
+        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch users delta')
+        return modified, deleted_ids, delta_link
+
+    async def _fetch_groups(self, client: GraphServiceClient) -> tuple[list[dict[str, str]], str | None]:
         request_configuration = RequestConfiguration(
             query_parameters=GroupsRequestBuilder.GroupsRequestBuilderGetQueryParameters(
                 select=['id', 'displayName', 'description', 'securityEnabled', 'mailEnabled'],
@@ -171,20 +292,41 @@ class GraphExportService:
         rows: list[dict[str, str]] = []
 
         def collect(group: Any) -> bool:
-            rows.append(
-                {
-                    'id': to_csv_value(getattr(group, 'id', None)),
-                    'displayName': to_csv_value(getattr(group, 'display_name', None)),
-                    'description': to_csv_value(getattr(group, 'description', None)),
-                    'securityEnabled': to_csv_value(getattr(group, 'security_enabled', None)),
-                    'mailEnabled': to_csv_value(getattr(group, 'mail_enabled', None)),
-                }
-            )
+            rows.append(self._group_to_row(group))
             return True
 
-        await self._iterate_collection(response, client, collect, operation_name='fetch groups')
+        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch groups')
         rows.sort(key=lambda row: (row['displayName'], row['id']))
-        return rows
+        return rows, delta_link
+
+    async def _fetch_groups_delta(
+        self, client: GraphServiceClient, delta_token: str
+    ) -> tuple[list[dict[str, str]], list[str], str | None]:
+        """Fetch group changes since the last sync using a stored delta link.
+
+        Returns (modified_rows, deleted_ids, new_delta_link).
+        """
+        builder = GroupsDeltaRequestBuilder(client.request_adapter, delta_token)
+        response = await self._run_with_retry(
+            builder.get,
+            operation_name='fetch groups delta',
+        )
+
+        modified: list[dict[str, str]] = []
+        deleted_ids: list[str] = []
+
+        def collect(group: Any) -> bool:
+            additional_data = getattr(group, 'additional_data', {}) or {}
+            if '@removed' in additional_data:
+                group_id = to_csv_value(getattr(group, 'id', None))
+                if group_id:
+                    deleted_ids.append(group_id)
+            else:
+                modified.append(self._group_to_row(group))
+            return True
+
+        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch groups delta')
+        return modified, deleted_ids, delta_link
 
     async def _fetch_memberships(self, client: GraphServiceClient, groups: list[dict[str, str]]) -> list[dict[str, str]]:
         semaphore = asyncio.Semaphore(self._settings.membership_concurrency)
@@ -242,18 +384,28 @@ class GraphExportService:
         callback: Callable[[Any], bool],
         *,
         operation_name: str,
-    ) -> None:
+    ) -> str | None:
+        """Iterate all pages of a collection, invoking callback for each item.
+
+        Returns the ``odata_delta_link`` from the final page when present (delta
+        queries only), or ``None`` for regular paginated responses.
+        """
         if response is None:
-            return
+            return None
 
         iterator = PageIterator(response, client.request_adapter)
         while True:
             iterator.enumerate(callback)
             if not iterator.current_page or not iterator.current_page.odata_next_link:
-                return
+                delta_link: str | None = (
+                    getattr(iterator.current_page, 'odata_delta_link', None)
+                    if iterator.current_page
+                    else None
+                )
+                return delta_link
             next_page = await self._run_with_retry(iterator.next, operation_name=f'{operation_name} page')
             if not next_page:
-                return
+                return None
             iterator.current_page = next_page
             iterator.pause_index = 0
 
@@ -281,6 +433,34 @@ class GraphExportService:
                 )
                 await asyncio.sleep(wait_time)
                 delay_seconds = min(delay_seconds * 2, self._settings.max_retry_delay_seconds)
+
+    def _user_to_row(self, user: Any) -> dict[str, str]:
+        return {
+            'id': to_csv_value(getattr(user, 'id', None)),
+            'userPrincipalName': to_csv_value(getattr(user, 'user_principal_name', None)),
+            'displayName': to_csv_value(getattr(user, 'display_name', None)),
+            'mail': to_csv_value(getattr(user, 'mail', None)),
+            'jobTitle': to_csv_value(getattr(user, 'job_title', None)),
+            'department': to_csv_value(getattr(user, 'department', None)),
+            'accountEnabled': to_csv_value(getattr(user, 'account_enabled', None)),
+        }
+
+    def _group_to_row(self, group: Any) -> dict[str, str]:
+        return {
+            'id': to_csv_value(getattr(group, 'id', None)),
+            'displayName': to_csv_value(getattr(group, 'display_name', None)),
+            'description': to_csv_value(getattr(group, 'description', None)),
+            'securityEnabled': to_csv_value(getattr(group, 'security_enabled', None)),
+            'mailEnabled': to_csv_value(getattr(group, 'mail_enabled', None)),
+        }
+
+    def _read_csv(self, file_path: Path, key_column: str) -> dict[str, dict[str, str]]:
+        result: dict[str, dict[str, str]] = {}
+        with file_path.open('r', newline='', encoding='utf-8') as csv_file:
+            reader = csv.DictReader(csv_file)
+            for row in reader:
+                result[row[key_column]] = dict(row)
+        return result
 
     def _write_exports(
         self,
