@@ -11,10 +11,126 @@ Production-ready Microsoft Entra ID export service for OpenText Identity Governa
 - Replaces null Entra attributes with empty strings
 - Handles large tenant pagination with the native Microsoft Graph `PageIterator`
 - Retries Graph throttling responses (`HTTP 429`) with exponential backoff
+- Supports **full sync** (re-fetch everything) and **incremental sync** (Graph delta queries, changes only)
 - Provides a React-based admin console for configuration visibility, connection monitoring, sync execution, and log review
 - Includes connection test controls so admins can validate tenant/client/scope values from the UI before running exports
-- Supports a configurable automatic refresh schedule managed from the admin console
+- Supports a configurable automatic refresh schedule with selectable sync type managed from the admin console
 - Ships as a Docker container with a multi-stage build
+
+## Architecture and flow
+
+### Component overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Admin console (React)                    │
+│  ┌──────────────┐  ┌──────────────────────┐  ┌──────────────┐  │
+│  │  Run export  │  │   Refresh schedule   │  │   Run log /  │  │
+│  │  [Full|Incr] │  │ [Full|Incr] interval │  │   history    │  │
+│  └──────┬───────┘  └──────────┬───────────┘  └──────────────┘  │
+└─────────┼────────────────────┼─────────────────────────────────┘
+          │  POST /api/sync     │  PUT /api/schedule
+          ▼                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    FastAPI  (routes.py)                         │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    SyncService                                  │
+│  ┌────────────────────────┐   ┌───────────────────────────────┐ │
+│  │   start(sync_type)     │   │      _scheduler_loop          │ │
+│  │   creates DB run row   │   │  fires on interval, passes    │ │
+│  │   spawns async task    │   │  schedule_sync_type to start()│ │
+│  └──────────┬─────────────┘   └───────────────────────────────┘ │
+└─────────────┼───────────────────────────────────────────────────┘
+              │  export(run_id, sync_type, run_store)
+              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  GraphExportService                             │
+│                                                                 │
+│   sync_type == "full"            sync_type == "incremental"     │
+│   ┌──────────────────────┐       ┌────────────────────────────┐ │
+│   │ GET /users           │       │ no stored delta tokens?    │ │
+│   │ GET /groups          │       │  └─► fall back to full     │ │
+│   │ GET /groups/*/members│       │ GET /users/delta?token     │ │
+│   │ write CSVs           │       │ GET /groups/delta?token    │ │
+│   │ store delta tokens   │       │ load latest/ CSVs          │ │
+│   └──────────────────────┘       │ merge adds/updates/deletes │ │
+│                                  │ GET /groups/*/members(all) │ │
+│                                  │ write CSVs                 │ │
+│                                  │ store new delta tokens     │ │
+│                                  └────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              SQLite  (RunStore / database.py)                   │
+│  sync_runs     schedule_config     delta_tokens                 │
+│  id            enabled             resource (users|groups)      │
+│  status        interval_minutes    token  (delta link URL)      │
+│  sync_type     sync_type           updated_at                   │
+│  started_at    updated_at                                       │
+│  completed_at                                                   │
+│  users_count                                                    │
+│  …                                                              │
+└─────────────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│               File system  (data/exports/)                      │
+│  <run_id>/users.csv                                             │
+│  <run_id>/groups.csv                                            │
+│  <run_id>/memberships.csv                                       │
+│  latest/users.csv      ◄── always reflects most recent run     │
+│  latest/groups.csv                                              │
+│  latest/memberships.csv                                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Sync type decision flow
+
+```
+User/scheduler triggers sync
+          │
+          ▼
+    sync_type == "incremental"?
+    ┌── yes ──────────────────────────────────────────────────────┐
+    │  delta tokens stored?  ──no──► fall back to full sync       │
+    │         │ yes                                               │
+    │         ▼                                                   │
+    │  latest/ CSVs exist?   ──no──► fall back to full sync       │
+    │         │ yes                                               │
+    │         ▼                                                   │
+    │  fetch /users/delta (token)  ──410 expired──► full sync     │
+    │  fetch /groups/delta (token)                                │
+    │         │                                                   │
+    │         ▼                                                   │
+    │  load latest/users.csv + latest/groups.csv                  │
+    │  apply adds / updates / deletes from delta responses        │
+    │         │                                                   │
+    │         ▼                                                   │
+    │  fetch all group memberships for current group set          │
+    │  write <run_id>/ CSVs, refresh latest/, store new tokens    │
+    └─────────────────────────────────────────────────────────────┘
+    └── no ───────────────────────────────────────────────────────┐
+    │  fetch all users, groups, memberships from Graph            │
+    │  write <run_id>/ CSVs, refresh latest/                      │
+    │  store delta tokens for future incremental syncs            │
+    └─────────────────────────────────────────────────────────────┘
+          │
+          ▼
+    update sync_runs row (completed / failed)
+```
+
+### Incremental sync behavior
+
+| Scenario | Behaviour |
+|---|---|
+| First ever sync | Full sync (no baseline) |
+| Incremental with valid token | Delta fetch + merge; memberships re-fetched for accuracy |
+| Delta token expired (HTTP 410) | Automatic fall-back to full sync; new tokens stored |
+| Incremental with missing `latest/` | Automatic fall-back to full sync |
 
 ## CSV output
 

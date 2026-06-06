@@ -27,6 +27,7 @@ class SyncService:
         self._schedule_change_event = asyncio.Event()
         self._schedule_enabled = False
         self._schedule_interval_minutes = 60
+        self._schedule_sync_type = 'full'
         self._schedule_updated_at: str | None = None
         self._next_scheduled_run_at: str | None = None
 
@@ -47,6 +48,10 @@ class SyncService:
         return self._schedule_interval_minutes
 
     @property
+    def schedule_sync_type(self) -> str:
+        return self._schedule_sync_type
+
+    @property
     def schedule_updated_at(self) -> str | None:
         return self._schedule_updated_at
 
@@ -58,6 +63,7 @@ class SyncService:
         schedule = await self._run_store.get_schedule()
         self._schedule_enabled = schedule['enabled']
         self._schedule_interval_minutes = schedule['interval_minutes']
+        self._schedule_sync_type = schedule.get('sync_type', 'full')
         self._schedule_updated_at = schedule['updated_at']
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
 
@@ -66,29 +72,32 @@ class SyncService:
             self._scheduler_task.cancel()
             await asyncio.gather(self._scheduler_task, return_exceptions=True)
 
-    async def update_schedule(self, *, enabled: bool, interval_minutes: int) -> None:
-        await self._run_store.update_schedule(enabled=enabled, interval_minutes=interval_minutes)
+    async def update_schedule(self, *, enabled: bool, interval_minutes: int, sync_type: str = 'full') -> None:
+        await self._run_store.update_schedule(
+            enabled=enabled, interval_minutes=interval_minutes, sync_type=sync_type
+        )
         schedule = await self._run_store.get_schedule()
         self._schedule_enabled = schedule['enabled']
         self._schedule_interval_minutes = schedule['interval_minutes']
+        self._schedule_sync_type = schedule.get('sync_type', 'full')
         self._schedule_updated_at = schedule['updated_at']
         self._schedule_change_event.set()
 
-    async def start(self) -> str:
+    async def start(self, sync_type: str = 'full') -> str:
         async with self._start_lock:
             if self.is_running:
                 raise SyncAlreadyRunningError('A sync is already in progress.')
 
             run_id = uuid4().hex
-            await self._run_store.create_run(run_id, 'queued')
+            await self._run_store.create_run(run_id, 'queued', sync_type=sync_type)
             self._active_run_id = run_id
-            self._task = asyncio.create_task(self._run(run_id))
+            self._task = asyncio.create_task(self._run(run_id, sync_type))
             return run_id
 
-    async def _run(self, run_id: str) -> None:
+    async def _run(self, run_id: str, sync_type: str) -> None:
         try:
             await self._run_store.update_run(run_id, status='running')
-            result = await self._exporter.export(run_id)
+            result = await self._exporter.export(run_id, sync_type=sync_type, run_store=self._run_store)
             await self._run_store.update_run(
                 run_id,
                 status='completed',
@@ -100,7 +109,7 @@ class SyncService:
                 groups_file=result.groups_file,
                 memberships_file=result.memberships_file,
             )
-            self._logger.info('Completed sync run %s', run_id)
+            self._logger.info('Completed %s sync run %s', sync_type, run_id)
         except Exception as exc:  # noqa: BLE001
             self._logger.exception('Sync run %s failed', run_id)
             await self._run_store.update_run(
@@ -131,9 +140,9 @@ class SyncService:
                     await asyncio.wait_for(self._schedule_change_event.wait(), timeout=wait_seconds)
                     continue
                 except asyncio.TimeoutError:
-                    self._logger.info('Starting scheduled sync.')
+                    self._logger.info('Starting scheduled %s sync.', self._schedule_sync_type)
                     try:
-                        await self.start()
+                        await self.start(sync_type=self._schedule_sync_type)
                     except SyncAlreadyRunningError:
                         self._logger.info('Skipped scheduled sync because another run is active.')
         except asyncio.CancelledError:
