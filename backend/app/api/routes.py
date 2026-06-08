@@ -9,6 +9,7 @@ from app.models import (
     ConnectionTestRequest,
     ConnectionTestResponse,
     HealthResponse,
+    LiveProgressResponse,
     LogResponse,
     ScheduleResponse,
     ScheduleUpdateRequest,
@@ -75,6 +76,19 @@ async def get_status(request: Request) -> SyncStatusResponse:
     latest_runs = await request.app.state.run_store.list_runs(limit=1)
     latest_run = SyncRunResponse(**latest_runs[0]) if latest_runs else None
     sync_service = request.app.state.sync_service
+    lp = sync_service.live_progress
+    live_progress = (
+        LiveProgressResponse(
+            stage=lp.stage,
+            users_fetched=lp.users_fetched,
+            groups_fetched=lp.groups_fetched,
+            memberships_fetched=lp.memberships_fetched,
+            roles_fetched=lp.roles_fetched,
+            role_memberships_fetched=lp.role_memberships_fetched,
+        )
+        if lp is not None
+        else None
+    )
     return SyncStatusResponse(
         active_run_id=sync_service.active_run_id,
         running=sync_service.is_running,
@@ -83,6 +97,7 @@ async def get_status(request: Request) -> SyncStatusResponse:
         schedule_sync_type=sync_service.schedule_sync_type,
         next_scheduled_run_at=sync_service.next_scheduled_run_at,
         latest_run=latest_run,
+        live_progress=live_progress,
     )
 
 
