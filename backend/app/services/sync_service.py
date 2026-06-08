@@ -105,9 +105,13 @@ class SyncService:
                 users_count=result.users_count,
                 groups_count=result.groups_count,
                 memberships_count=result.memberships_count,
+                roles_count=result.roles_count,
+                role_memberships_count=result.role_memberships_count,
                 users_file=result.users_file,
                 groups_file=result.groups_file,
                 memberships_file=result.memberships_file,
+                roles_file=result.roles_file,
+                role_memberships_file=result.role_memberships_file,
             )
             self._logger.info('Completed %s sync run %s', sync_type, run_id)
         except Exception as exc:  # noqa: BLE001

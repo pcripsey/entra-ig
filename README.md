@@ -6,7 +6,7 @@ Production-ready Microsoft Entra ID export service for OpenText Identity Governa
 
 - Connects to Microsoft Graph using the official Python `msgraph-sdk`
 - Authenticates with client credentials via `azure.identity.aio.ClientSecretCredential`
-- Exports `users.csv`, `groups.csv`, and `memberships.csv` with deterministic column ordering
+- Exports `users.csv`, `groups.csv`, `memberships.csv`, `roles.csv`, and `role_memberships.csv` with deterministic column ordering
 - Sanitizes carriage returns and line feeds so OpenText CSV ingestion is not broken by multiline values
 - Replaces null Entra attributes with empty strings
 - Handles large tenant pagination with the native Microsoft Graph `PageIterator`
@@ -82,9 +82,13 @@ Production-ready Microsoft Entra ID export service for OpenText Identity Governa
 │  <run_id>/users.csv                                             │
 │  <run_id>/groups.csv                                            │
 │  <run_id>/memberships.csv                                       │
+│  <run_id>/roles.csv                                             │
+│  <run_id>/role_memberships.csv                                  │
 │  latest/users.csv      ◄── always reflects most recent run     │
 │  latest/groups.csv                                              │
 │  latest/memberships.csv                                        │
+│  latest/roles.csv                                               │
+│  latest/role_memberships.csv                                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -150,6 +154,21 @@ Columns:
 
 Columns:
 `group_id,user_id`
+
+### roles.csv
+
+Columns:
+`id,roleTemplateId,displayName,description`
+
+Rows represent activated directory roles in the tenant (roles that have been assigned to at least one principal).
+
+### role_memberships.csv
+
+Columns:
+`role_id,user_id`
+
+> [!NOTE]
+> The app registration used with `GRAPH_SCOPE=https://graph.microsoft.com/.default` must include `RoleManagement.Read.Directory` in addition to `User.Read.All` and `Group.Read.All`.
 
 ## Environment variables
 
