@@ -354,3 +354,17 @@ th {
     display: grid;
   }
 }
+
+/* ── Live extraction progress ───────────────────── */
+.live-progress {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.live-stage {
+  font-size: 0.8125rem;
+  opacity: 0.75;
+  font-style: italic;
+  margin: 0 0 0.75rem;
+}

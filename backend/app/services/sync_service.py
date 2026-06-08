@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from app.database import RunStore
 from app.logging_config import LOGGER_NAME
-from app.services.graph_exporter import GraphExportService
+from app.services.graph_exporter import GraphExportService, LiveProgress
 
 import logging
 
@@ -30,6 +30,7 @@ class SyncService:
         self._schedule_sync_type = 'full'
         self._schedule_updated_at: str | None = None
         self._next_scheduled_run_at: str | None = None
+        self._live_progress: LiveProgress | None = None
 
     @property
     def active_run_id(self) -> str | None:
@@ -38,6 +39,10 @@ class SyncService:
     @property
     def is_running(self) -> bool:
         return bool(self._task and not self._task.done())
+
+    @property
+    def live_progress(self) -> LiveProgress | None:
+        return self._live_progress
 
     @property
     def schedule_enabled(self) -> bool:
@@ -91,13 +96,15 @@ class SyncService:
             run_id = uuid4().hex
             await self._run_store.create_run(run_id, 'queued', sync_type=sync_type)
             self._active_run_id = run_id
-            self._task = asyncio.create_task(self._run(run_id, sync_type))
+            progress = LiveProgress()
+            self._live_progress = progress
+            self._task = asyncio.create_task(self._run(run_id, sync_type, progress))
             return run_id
 
-    async def _run(self, run_id: str, sync_type: str) -> None:
+    async def _run(self, run_id: str, sync_type: str, progress: LiveProgress) -> None:
         try:
             await self._run_store.update_run(run_id, status='running')
-            result = await self._exporter.export(run_id, sync_type=sync_type, run_store=self._run_store)
+            result = await self._exporter.export(run_id, sync_type=sync_type, run_store=self._run_store, progress=progress)
             await self._run_store.update_run(
                 run_id,
                 status='completed',
@@ -125,6 +132,7 @@ class SyncService:
         finally:
             self._active_run_id = None
             self._task = None
+            self._live_progress = None
 
     async def _scheduler_loop(self) -> None:
         try:

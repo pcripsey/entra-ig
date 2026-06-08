@@ -61,20 +61,30 @@ class ExportResult:
     role_memberships_file: str
 
 
+@dataclass
+class LiveProgress:
+    stage: str = 'Initializing'
+    users_fetched: int = 0
+    groups_fetched: int = 0
+    memberships_fetched: int = 0
+    roles_fetched: int = 0
+    role_memberships_fetched: int = 0
+
+
 class GraphExportService:
     def __init__(self, settings: Settings):
         self._settings = settings
         self._logger = logging.getLogger(LOGGER_NAME)
 
-    async def export(self, run_id: str, sync_type: str = 'full', run_store: RunStore | None = None) -> ExportResult:
+    async def export(self, run_id: str, sync_type: str = 'full', run_store: RunStore | None = None, progress: LiveProgress | None = None) -> ExportResult:
         if not self._settings.graph_configured:
             raise RuntimeError('TENANT_ID, CLIENT_ID, and CLIENT_SECRET must all be configured.')
 
         if sync_type == 'incremental' and run_store is not None:
-            return await self._export_incremental(run_id, run_store)
-        return await self._export_full(run_id, run_store)
+            return await self._export_incremental(run_id, run_store, progress)
+        return await self._export_full(run_id, run_store, progress)
 
-    async def _export_full(self, run_id: str, run_store: RunStore | None) -> ExportResult:
+    async def _export_full(self, run_id: str, run_store: RunStore | None, progress: LiveProgress | None = None) -> ExportResult:
         credential, client = self._create_graph_client(
             tenant_id=self._settings.tenant_id,
             client_id=self._settings.client_id,
@@ -82,11 +92,23 @@ class GraphExportService:
             graph_scope=self._settings.graph_scope,
         )
         try:
-            users, users_delta_link = await self._fetch_users(client)
-            groups, groups_delta_link = await self._fetch_groups(client)
-            memberships = await self._fetch_memberships(client, groups)
-            roles = await self._fetch_roles(client)
-            role_memberships = await self._fetch_role_memberships(client, roles)
+            if progress is not None:
+                progress.stage = 'Fetching users'
+            users, users_delta_link = await self._fetch_users(client, progress)
+            if progress is not None:
+                progress.stage = 'Fetching groups'
+            groups, groups_delta_link = await self._fetch_groups(client, progress)
+            if progress is not None:
+                progress.stage = 'Fetching memberships'
+            memberships = await self._fetch_memberships(client, groups, progress)
+            if progress is not None:
+                progress.stage = 'Fetching roles'
+            roles = await self._fetch_roles(client, progress)
+            if progress is not None:
+                progress.stage = 'Fetching role memberships'
+            role_memberships = await self._fetch_role_memberships(client, roles, progress)
+            if progress is not None:
+                progress.stage = 'Writing exports'
             result = self._write_exports(run_id, users, groups, memberships, roles, role_memberships)
 
             # Store delta tokens so future incremental syncs have a baseline.
@@ -103,7 +125,7 @@ class GraphExportService:
         finally:
             await credential.close()
 
-    async def _export_incremental(self, run_id: str, run_store: RunStore) -> ExportResult:
+    async def _export_incremental(self, run_id: str, run_store: RunStore, progress: LiveProgress | None = None) -> ExportResult:
         """Incremental export using Microsoft Graph delta queries.
 
         Fetches only changed users and groups since the last sync, merges those
@@ -123,7 +145,7 @@ class GraphExportService:
             self._logger.info(
                 'No delta tokens or baseline exports found; falling back to full sync for run %s.', run_id
             )
-            return await self._export_full(run_id, run_store)
+            return await self._export_full(run_id, run_store, progress)
 
         credential, client = self._create_graph_client(
             tenant_id=self._settings.tenant_id,
@@ -133,11 +155,15 @@ class GraphExportService:
         )
         try:
             try:
+                if progress is not None:
+                    progress.stage = 'Fetching users'
                 modified_users, deleted_user_ids, new_users_token = await self._fetch_users_delta(
-                    client, users_token
+                    client, users_token, progress
                 )
+                if progress is not None:
+                    progress.stage = 'Fetching groups'
                 modified_groups, deleted_group_ids, new_groups_token = await self._fetch_groups_delta(
-                    client, groups_token
+                    client, groups_token, progress
                 )
             except APIError as exc:
                 status_code = getattr(exc, 'response_status_code', None)
@@ -146,7 +172,7 @@ class GraphExportService:
                     self._logger.warning(
                         'Delta token expired (HTTP 410); falling back to full sync for run %s.', run_id
                     )
-                    return await self._export_full(run_id, run_store)
+                    return await self._export_full(run_id, run_store, progress)
                 raise
 
             # Load existing baseline data.
@@ -168,10 +194,18 @@ class GraphExportService:
             users = sorted(existing_users.values(), key=lambda r: (r.get('userPrincipalName', ''), r.get('id', '')))
             groups = sorted(existing_groups.values(), key=lambda r: (r.get('displayName', ''), r.get('id', '')))
 
-            memberships = await self._fetch_memberships(client, groups)
+            if progress is not None:
+                progress.stage = 'Fetching memberships'
+            memberships = await self._fetch_memberships(client, groups, progress)
             # Roles and role memberships do not support delta queries; always re-fetch in full.
-            roles = await self._fetch_roles(client)
-            role_memberships = await self._fetch_role_memberships(client, roles)
+            if progress is not None:
+                progress.stage = 'Fetching roles'
+            roles = await self._fetch_roles(client, progress)
+            if progress is not None:
+                progress.stage = 'Fetching role memberships'
+            role_memberships = await self._fetch_role_memberships(client, roles, progress)
+            if progress is not None:
+                progress.stage = 'Writing exports'
             result = self._write_exports(run_id, users, groups, memberships, roles, role_memberships)
 
             # Persist refreshed delta tokens.
@@ -241,7 +275,7 @@ class GraphExportService:
         client = GraphServiceClient(credentials=credential, scopes=[graph_scope or self._settings.graph_scope])
         return credential, client
 
-    async def _fetch_users(self, client: GraphServiceClient) -> tuple[list[dict[str, str]], str | None]:
+    async def _fetch_users(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> tuple[list[dict[str, str]], str | None]:
         request_configuration = RequestConfiguration(
             query_parameters=UsersRequestBuilder.UsersRequestBuilderGetQueryParameters(
                 select=['id', 'userPrincipalName', 'displayName', 'mail', 'jobTitle', 'department', 'accountEnabled'],
@@ -257,6 +291,8 @@ class GraphExportService:
 
         def collect(user: Any) -> bool:
             rows.append(self._user_to_row(user))
+            if progress is not None:
+                progress.users_fetched += 1
             return True
 
         delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch users')
@@ -264,7 +300,7 @@ class GraphExportService:
         return rows, delta_link
 
     async def _fetch_users_delta(
-        self, client: GraphServiceClient, delta_token: str
+        self, client: GraphServiceClient, delta_token: str, progress: LiveProgress | None = None
     ) -> tuple[list[dict[str, str]], list[str], str | None]:
         """Fetch user changes since the last sync using a stored delta link.
 
@@ -287,12 +323,14 @@ class GraphExportService:
                     deleted_ids.append(user_id)
             else:
                 modified.append(self._user_to_row(user))
+            if progress is not None:
+                progress.users_fetched += 1
             return True
 
         delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch users delta')
         return modified, deleted_ids, delta_link
 
-    async def _fetch_groups(self, client: GraphServiceClient) -> tuple[list[dict[str, str]], str | None]:
+    async def _fetch_groups(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> tuple[list[dict[str, str]], str | None]:
         request_configuration = RequestConfiguration(
             query_parameters=GroupsRequestBuilder.GroupsRequestBuilderGetQueryParameters(
                 select=['id', 'displayName', 'description', 'securityEnabled', 'mailEnabled'],
@@ -308,6 +346,8 @@ class GraphExportService:
 
         def collect(group: Any) -> bool:
             rows.append(self._group_to_row(group))
+            if progress is not None:
+                progress.groups_fetched += 1
             return True
 
         delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch groups')
@@ -315,7 +355,7 @@ class GraphExportService:
         return rows, delta_link
 
     async def _fetch_groups_delta(
-        self, client: GraphServiceClient, delta_token: str
+        self, client: GraphServiceClient, delta_token: str, progress: LiveProgress | None = None
     ) -> tuple[list[dict[str, str]], list[str], str | None]:
         """Fetch group changes since the last sync using a stored delta link.
 
@@ -338,12 +378,14 @@ class GraphExportService:
                     deleted_ids.append(group_id)
             else:
                 modified.append(self._group_to_row(group))
+            if progress is not None:
+                progress.groups_fetched += 1
             return True
 
         delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch groups delta')
         return modified, deleted_ids, delta_link
 
-    async def _fetch_memberships(self, client: GraphServiceClient, groups: list[dict[str, str]]) -> list[dict[str, str]]:
+    async def _fetch_memberships(self, client: GraphServiceClient, groups: list[dict[str, str]], progress: LiveProgress | None = None) -> list[dict[str, str]]:
         semaphore = asyncio.Semaphore(self._settings.membership_concurrency)
         membership_pairs: set[tuple[str, str]] = set()
         async def collect_group_members(group: dict[str, str]) -> None:
@@ -374,6 +416,8 @@ class GraphExportService:
                     if getattr(member, 'odata_type', '') != '#microsoft.graph.user':
                         return True
                     membership_pairs.add((group_id, user_id))
+                    if progress is not None:
+                        progress.memberships_fetched += 1
                     return True
 
                 await self._iterate_collection(
@@ -392,7 +436,7 @@ class GraphExportService:
         ]
         return rows
 
-    async def _fetch_roles(self, client: GraphServiceClient) -> list[dict[str, str]]:
+    async def _fetch_roles(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> list[dict[str, str]]:
         request_configuration = RequestConfiguration(
             query_parameters=DirectoryRolesRequestBuilder.DirectoryRolesRequestBuilderGetQueryParameters(
                 select=['id', 'roleTemplateId', 'displayName', 'description'],
@@ -407,6 +451,8 @@ class GraphExportService:
 
         def collect(role: Any) -> bool:
             rows.append(self._role_to_row(role))
+            if progress is not None:
+                progress.roles_fetched += 1
             return True
 
         await self._iterate_collection(response, client, collect, operation_name='fetch roles')
@@ -414,7 +460,7 @@ class GraphExportService:
         return rows
 
     async def _fetch_role_memberships(
-        self, client: GraphServiceClient, roles: list[dict[str, str]]
+        self, client: GraphServiceClient, roles: list[dict[str, str]], progress: LiveProgress | None = None
     ) -> list[dict[str, str]]:
         semaphore = asyncio.Semaphore(self._settings.membership_concurrency)
         membership_pairs: set[tuple[str, str]] = set()
@@ -443,6 +489,8 @@ class GraphExportService:
                     if getattr(member, 'odata_type', '') != '#microsoft.graph.user':
                         return True
                     membership_pairs.add((role_id, user_id))
+                    if progress is not None:
+                        progress.role_memberships_fetched += 1
                     return True
 
                 await self._iterate_collection(

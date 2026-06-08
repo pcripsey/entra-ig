@@ -50,6 +50,16 @@ type SyncStatusResponse = {
   schedule_sync_type: string
   next_scheduled_run_at: string | null
   latest_run: SyncRunResponse | null
+  live_progress: LiveProgressResponse | null
+}
+
+type LiveProgressResponse = {
+  stage: string
+  users_fetched: number
+  groups_fetched: number
+  memberships_fetched: number
+  roles_fetched: number
+  role_memberships_fetched: number
 }
 
 type LogResponse = {
@@ -144,18 +154,22 @@ function App() {
     }
   }
 
+  // initial load
   useEffect(() => {
     const initialLoad = window.setTimeout(() => {
       void loadDashboard()
     }, 0)
+    return () => window.clearTimeout(initialLoad)
+  }, [])
+
+  // dynamic polling: 5 s while running, 15 s when idle
+  useEffect(() => {
+    const intervalMs = status?.running ? 5000 : 15000
     const timer = window.setInterval(() => {
       void loadDashboard()
-    }, 15000)
-    return () => {
-      window.clearTimeout(initialLoad)
-      window.clearInterval(timer)
-    }
-  }, [])
+    }, intervalMs)
+    return () => window.clearInterval(timer)
+  }, [status?.running])
 
   const triggerSync = async () => {
     try {
@@ -309,6 +323,18 @@ function App() {
               <dd>{health?.latest_run_status ?? '—'}</dd>
             </div>
           </dl>
+          {status?.running && status.live_progress ? (
+            <div className="live-progress">
+              <p className="live-stage">{status.live_progress.stage}…</p>
+              <dl className="detail-list compact">
+                <div><dt>Users</dt><dd>{status.live_progress.users_fetched.toLocaleString()}</dd></div>
+                <div><dt>Groups</dt><dd>{status.live_progress.groups_fetched.toLocaleString()}</dd></div>
+                <div><dt>Group memberships</dt><dd>{status.live_progress.memberships_fetched.toLocaleString()}</dd></div>
+                <div><dt>Roles</dt><dd>{status.live_progress.roles_fetched.toLocaleString()}</dd></div>
+                <div><dt>Role memberships</dt><dd>{status.live_progress.role_memberships_fetched.toLocaleString()}</dd></div>
+              </dl>
+            </div>
+          ) : null}
         </article>
 
         <article className="panel">

@@ -46,6 +46,15 @@ class SyncRunResponse(BaseModel):
     error: str | None = None
 
 
+class LiveProgressResponse(BaseModel):
+    stage: str
+    users_fetched: int
+    groups_fetched: int
+    memberships_fetched: int
+    roles_fetched: int
+    role_memberships_fetched: int
+
+
 class SyncStatusResponse(BaseModel):
     active_run_id: str | None
     running: bool
@@ -54,6 +63,7 @@ class SyncStatusResponse(BaseModel):
     schedule_sync_type: str
     next_scheduled_run_at: str | None
     latest_run: SyncRunResponse | None
+    live_progress: LiveProgressResponse | None = None
 
 
 class SyncStartRequest(BaseModel):
