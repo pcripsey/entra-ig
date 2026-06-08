@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import csv
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -69,6 +70,10 @@ class LiveProgress:
     memberships_fetched: int = 0
     roles_fetched: int = 0
     role_memberships_fetched: int = 0
+    # Throttle tracking
+    throttle_count: int = 0
+    last_throttled_at: str | None = None
+    last_throttled_operation: str | None = None
 
 
 class GraphExportService:
@@ -285,6 +290,7 @@ class GraphExportService:
         response = await self._run_with_retry(
             lambda: client.users.get(request_configuration=request_configuration),
             operation_name='fetch users',
+            progress=progress,
         )
 
         rows: list[dict[str, str]] = []
@@ -295,7 +301,7 @@ class GraphExportService:
                 progress.users_fetched += 1
             return True
 
-        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch users')
+        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch users', progress=progress)
         rows.sort(key=lambda row: (row['userPrincipalName'], row['id']))
         return rows, delta_link
 
@@ -310,6 +316,7 @@ class GraphExportService:
         response = await self._run_with_retry(
             builder.get,
             operation_name='fetch users delta',
+            progress=progress,
         )
 
         modified: list[dict[str, str]] = []
@@ -327,7 +334,7 @@ class GraphExportService:
                 progress.users_fetched += 1
             return True
 
-        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch users delta')
+        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch users delta', progress=progress)
         return modified, deleted_ids, delta_link
 
     async def _fetch_groups(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> tuple[list[dict[str, str]], str | None]:
@@ -340,6 +347,7 @@ class GraphExportService:
         response = await self._run_with_retry(
             lambda: client.groups.get(request_configuration=request_configuration),
             operation_name='fetch groups',
+            progress=progress,
         )
 
         rows: list[dict[str, str]] = []
@@ -350,7 +358,7 @@ class GraphExportService:
                 progress.groups_fetched += 1
             return True
 
-        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch groups')
+        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch groups', progress=progress)
         rows.sort(key=lambda row: (row['displayName'], row['id']))
         return rows, delta_link
 
@@ -365,6 +373,7 @@ class GraphExportService:
         response = await self._run_with_retry(
             builder.get,
             operation_name='fetch groups delta',
+            progress=progress,
         )
 
         modified: list[dict[str, str]] = []
@@ -382,7 +391,7 @@ class GraphExportService:
                 progress.groups_fetched += 1
             return True
 
-        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch groups delta')
+        delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch groups delta', progress=progress)
         return modified, deleted_ids, delta_link
 
     async def _fetch_memberships(self, client: GraphServiceClient, groups: list[dict[str, str]], progress: LiveProgress | None = None) -> list[dict[str, str]]:
@@ -402,6 +411,7 @@ class GraphExportService:
                         request_configuration=request_configuration,
                     ),
                     operation_name=f'fetch memberships for {group_id}',
+                    progress=progress,
                 )
                 if response is None:
                     return
@@ -425,6 +435,7 @@ class GraphExportService:
                     client,
                     collect,
                     operation_name=f'fetch memberships for {group_id}',
+                    progress=progress,
                 )
                 self._logger.info('Processed group membership page set for %s', group_id)
 
@@ -445,6 +456,7 @@ class GraphExportService:
         response = await self._run_with_retry(
             lambda: client.directory_roles.get(request_configuration=request_configuration),
             operation_name='fetch roles',
+            progress=progress,
         )
 
         rows: list[dict[str, str]] = []
@@ -455,7 +467,7 @@ class GraphExportService:
                 progress.roles_fetched += 1
             return True
 
-        await self._iterate_collection(response, client, collect, operation_name='fetch roles')
+        await self._iterate_collection(response, client, collect, operation_name='fetch roles', progress=progress)
         rows.sort(key=lambda row: (row['displayName'], row['id']))
         return rows
 
@@ -478,6 +490,7 @@ class GraphExportService:
                         request_configuration=request_configuration,
                     ),
                     operation_name=f'fetch role memberships for {role_id}',
+                    progress=progress,
                 )
                 if response is None:
                     return
@@ -498,6 +511,7 @@ class GraphExportService:
                     client,
                     collect,
                     operation_name=f'fetch role memberships for {role_id}',
+                    progress=progress,
                 )
                 self._logger.info('Processed role membership page set for %s', role_id)
 
@@ -516,6 +530,7 @@ class GraphExportService:
         callback: Callable[[Any], bool],
         *,
         operation_name: str,
+        progress: LiveProgress | None = None,
     ) -> str | None:
         """Iterate all pages of a collection, invoking callback for each item.
 
@@ -535,36 +550,78 @@ class GraphExportService:
                     else None
                 )
                 return delta_link
-            next_page = await self._run_with_retry(iterator.next, operation_name=f'{operation_name} page')
+            next_page = await self._run_with_retry(
+                iterator.next,
+                operation_name=f'{operation_name} page',
+                progress=progress,
+            )
             if not next_page:
                 return None
             iterator.current_page = next_page
             iterator.pause_index = 0
 
-    async def _run_with_retry(self, operation: Callable[[], Any], *, operation_name: str) -> Any:
+    async def _run_with_retry(
+        self,
+        operation: Callable[[], Any],
+        *,
+        operation_name: str,
+        progress: LiveProgress | None = None,
+    ) -> Any:
+        """Execute *operation*, retrying on HTTP 429 with exponential back-off.
+
+        Back-off logic:
+        - Always honour the ``Retry-After`` response header when present.
+        - Otherwise use exponential back-off starting at 1 s, capped at
+          ``settings.max_retry_delay_seconds``.
+        - Give up (re-raise) after ``settings.max_retry_attempts`` total attempts.
+        - Each throttle hit is recorded on *progress* (if provided) so the
+          admin console can surface it in real time.
+        """
         delay_seconds = 1.0
-        for attempt in range(1, self._settings.max_retry_attempts + 1):
+        max_attempts = self._settings.max_retry_attempts
+        max_delay = self._settings.max_retry_delay_seconds
+
+        for attempt in range(1, max_attempts + 1):
             try:
                 return await operation()
             except APIError as exc:
                 status_code = getattr(exc, 'response_status_code', None)
-                if status_code != 429 or attempt == self._settings.max_retry_attempts:
+                if status_code != 429 or attempt == max_attempts:
                     raise
 
-                retry_after = None
+                # --- record throttle hit in live progress ---
+                throttled_at = datetime.now(timezone.utc).isoformat()
+                if progress is not None:
+                    progress.throttle_count += 1
+                    progress.last_throttled_at = throttled_at
+                    progress.last_throttled_operation = operation_name
+
+                # --- determine wait time ---
+                retry_after: float | None = None
                 headers = getattr(exc, 'response_headers', None) or {}
                 if 'Retry-After' in headers:
-                    retry_after = float(headers['Retry-After'])
+                    try:
+                        retry_after = float(headers['Retry-After'])
+                    except (TypeError, ValueError):
+                        retry_after = None
+
                 wait_time = retry_after if retry_after is not None else delay_seconds
+                # Always cap at the configured maximum delay.
+                wait_time = min(wait_time, max_delay)
+
                 self._logger.warning(
-                    'Graph throttled during %s. Attempt %s/%s; sleeping %.1fs.',
+                    'Graph throttled (HTTP 429) during "%s". '
+                    'Attempt %s/%s; sleeping %.1fs (Retry-After header: %s).',
                     operation_name,
                     attempt,
-                    self._settings.max_retry_attempts,
+                    max_attempts,
                     wait_time,
+                    retry_after,
                 )
                 await asyncio.sleep(wait_time)
-                delay_seconds = min(delay_seconds * 2, self._settings.max_retry_delay_seconds)
+                # Advance the exponential back-off for the next attempt (used when
+                # no Retry-After header is present).
+                delay_seconds = min(delay_seconds * 2, max_delay)
 
     def _user_to_row(self, user: Any) -> dict[str, str]:
         return {
