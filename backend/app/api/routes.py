@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+
+_RUN_ID_RE = re.compile(r'^[0-9a-f]{32}$')
 
 from app.models import (
     ConfigResponse,
@@ -130,6 +133,8 @@ async def get_run(run_id: str, request: Request) -> SyncRunResponse:
 
 @router.delete('/runs/{run_id}', status_code=204)
 async def delete_run(run_id: str, request: Request) -> None:
+    if not _RUN_ID_RE.match(run_id):
+        raise HTTPException(status_code=404, detail='Run not found.')
     sync_service = request.app.state.sync_service
     if sync_service.active_run_id == run_id:
         raise HTTPException(status_code=409, detail='Cannot delete an active run.')
@@ -139,12 +144,13 @@ async def delete_run(run_id: str, request: Request) -> None:
         raise HTTPException(status_code=404, detail='Run not found.')
     await run_store.delete_run(run_id)
     export_base = Path(request.app.state.settings.export_base_dir).resolve()
-    export_dir = (export_base / run_id).resolve()
-    if export_dir.is_relative_to(export_base) and export_dir.exists():
+    safe_run_id = _RUN_ID_RE.match(run_id).group()  # validated hex-only string
+    export_dir = export_base / safe_run_id
+    if export_dir.exists():
         try:
             shutil.rmtree(export_dir)
         except OSError:
-            request.app.state.logger.warning('Could not remove export directory %s', export_dir)
+            request.app.state.logger.warning('Could not remove export directory %s', export_dir, exc_info=True)
 
 
 @router.get('/logs', response_model=LogResponse)
