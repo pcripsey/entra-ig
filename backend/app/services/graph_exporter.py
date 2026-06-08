@@ -200,6 +200,7 @@ IG_PERMISSION_TO_HOLDER_COLUMNS = (
 
 IG_PERMISSION_HIERARCHY_COLUMNS = ('permissionId', 'parentPermissionId', 'assignmentType')
 IG_PERMISSION_HIERARCHY_PC_COLUMNS = ('permissionId', 'childPermissionId', 'assignmentType')
+MAX_SHORT_DESCRIPTION_LENGTH = 255
 
 
 @dataclass(slots=True)
@@ -1088,7 +1089,7 @@ class GraphExportService:
             'longDescription': description,
             'ldapDN': group.get('onPremisesDistinguishedName', ''),
             'alternateName': group.get('mailNickname', ''),
-            'shortDescription': description[:255] if description else '',
+            'shortDescription': description[:MAX_SHORT_DESCRIPTION_LENGTH] if description else '',
         }
 
     def _role_to_ig_permission_row(self, role: dict[str, str], holder_count: int) -> dict[str, str]:
