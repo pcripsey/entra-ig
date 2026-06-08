@@ -138,9 +138,13 @@ async def delete_run(run_id: str, request: Request) -> None:
     if run is None:
         raise HTTPException(status_code=404, detail='Run not found.')
     await run_store.delete_run(run_id)
-    export_dir = Path(request.app.state.settings.export_base_dir) / run_id
-    if export_dir.exists():
-        shutil.rmtree(export_dir)
+    export_base = Path(request.app.state.settings.export_base_dir).resolve()
+    export_dir = (export_base / run_id).resolve()
+    if export_dir.is_relative_to(export_base) and export_dir.exists():
+        try:
+            shutil.rmtree(export_dir)
+        except OSError:
+            request.app.state.logger.warning('Could not remove export directory %s', export_dir)
 
 
 @router.get('/logs', response_model=LogResponse)

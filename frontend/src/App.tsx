@@ -89,7 +89,7 @@ type SyncType = 'full' | 'incremental'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL ?? '/api'
 
-async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
+async function fetchJson<T>(path: string, options?: RequestInit): Promise<T | undefined> {
   const response = await fetch(`${apiBase}${path}`, {
     headers: { 'Content-Type': 'application/json' },
     ...options,
@@ -101,10 +101,18 @@ async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   if (response.status === 204) {
-    return undefined as T
+    return undefined
   }
 
   return (await response.json()) as T
+}
+
+async function fetchJsonRequired<T>(path: string, options?: RequestInit): Promise<T> {
+  const result = await fetchJson<T>(path, options)
+  if (result === undefined) {
+    throw new Error(`Expected response body but received none for ${path}`)
+  }
+  return result
 }
 
 function formatDate(value: string | null): string {
@@ -142,13 +150,13 @@ function App() {
     try {
       setError(null)
       const [configData, healthData, statusData, runData, logData, scheduleData, retryConfigData] = await Promise.all([
-        fetchJson<ConfigResponse>('/config'),
-        fetchJson<HealthResponse>('/health'),
-        fetchJson<SyncStatusResponse>('/status'),
-        fetchJson<SyncRunResponse[]>('/runs'),
-        fetchJson<LogResponse>('/logs?lines=200'),
-        fetchJson<ScheduleResponse>('/schedule'),
-        fetchJson<RetryConfigResponse>('/retry-config'),
+        fetchJsonRequired<ConfigResponse>('/config'),
+        fetchJsonRequired<HealthResponse>('/health'),
+        fetchJsonRequired<SyncStatusResponse>('/status'),
+        fetchJsonRequired<SyncRunResponse[]>('/runs'),
+        fetchJsonRequired<LogResponse>('/logs?lines=200'),
+        fetchJsonRequired<ScheduleResponse>('/schedule'),
+        fetchJsonRequired<RetryConfigResponse>('/retry-config'),
       ])
       setConfig(configData)
       setTenantId(configData.tenant_id)
@@ -211,7 +219,7 @@ function App() {
         interval_minutes: Number(scheduleIntervalMinutes),
         sync_type: scheduleSyncType,
       }
-      const scheduleData = await fetchJson<ScheduleResponse>('/schedule', {
+      const scheduleData = await fetchJsonRequired<ScheduleResponse>('/schedule', {
         method: 'PUT',
         body: JSON.stringify(payload),
       })
@@ -231,7 +239,7 @@ function App() {
     try {
       setTestingConnection(true)
       setError(null)
-      const result = await fetchJson<ConnectionTestResponse>('/connection/test', {
+      const result = await fetchJsonRequired<ConnectionTestResponse>('/connection/test', {
         method: 'POST',
         body: JSON.stringify({
           tenant_id: tenantId,
@@ -252,7 +260,7 @@ function App() {
     try {
       setSavingRetryConfig(true)
       setError(null)
-      const data = await fetchJson<RetryConfigResponse>('/retry-config', {
+      const data = await fetchJsonRequired<RetryConfigResponse>('/retry-config', {
         method: 'PUT',
         body: JSON.stringify({
           max_retry_attempts: Number(retryAttempts),
