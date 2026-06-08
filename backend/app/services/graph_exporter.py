@@ -425,7 +425,6 @@ class GraphExportService:
                 request_configuration = RequestConfiguration(
                     query_parameters=RoleMembersRequestBuilder.MembersRequestBuilderGetQueryParameters(
                         select=['id'],
-                        top=self._settings.graph_page_size,
                     )
                 )
                 response = await self._run_with_retry(

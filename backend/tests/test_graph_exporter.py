@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from app.config import Settings
@@ -49,3 +50,40 @@ def test_write_exports_writes_role_csvs(tmp_path) -> None:
     assert result.role_memberships_count == 1
     assert result.roles_file == str(run_dir / 'roles.csv')
     assert result.role_memberships_file == str(run_dir / 'role_memberships.csv')
+
+
+def test_fetch_role_memberships_omits_top_parameter() -> None:
+    settings = Settings()
+
+    class TestExporter(GraphExportService):
+        async def _run_with_retry(self, operation, *, operation_name):
+            return await operation()
+
+        async def _iterate_collection(self, response, client, callback, *, operation_name):
+            return None
+
+    captured_request_configurations: list[object] = []
+
+    class FakeMembers:
+        async def get(self, *, request_configuration):
+            captured_request_configurations.append(request_configuration)
+            return SimpleNamespace(value=[])
+
+    class FakeDirectoryRole:
+        members = FakeMembers()
+
+    class FakeDirectoryRoles:
+        def by_directory_role_id(self, role_id):
+            return FakeDirectoryRole()
+
+    class FakeClient:
+        directory_roles = FakeDirectoryRoles()
+
+    exporter = TestExporter(settings)
+    rows = asyncio.run(exporter._fetch_role_memberships(FakeClient(), [{'id': 'role-1'}]))
+
+    assert rows == []
+    assert len(captured_request_configurations) == 1
+    query_parameters = captured_request_configurations[0].query_parameters
+    assert query_parameters.select == ['id']
+    assert getattr(query_parameters, 'top', None) is None
