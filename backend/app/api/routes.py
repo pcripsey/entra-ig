@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import re
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+
+_RUN_ID_RE = re.compile(r'^[0-9a-f]{32}$')
 
 from app.models import (
     ConfigResponse,
@@ -11,6 +15,8 @@ from app.models import (
     HealthResponse,
     LiveProgressResponse,
     LogResponse,
+    RetryConfigResponse,
+    RetryConfigUpdateRequest,
     ScheduleResponse,
     ScheduleUpdateRequest,
     SyncRunResponse,
@@ -125,6 +131,27 @@ async def get_run(run_id: str, request: Request) -> SyncRunResponse:
     return SyncRunResponse(**run)
 
 
+@router.delete('/runs/{run_id}', status_code=204)
+async def delete_run(run_id: str, request: Request) -> None:
+    if not _RUN_ID_RE.match(run_id):
+        raise HTTPException(status_code=404, detail='Run not found.')
+    sync_service = request.app.state.sync_service
+    if sync_service.active_run_id == run_id:
+        raise HTTPException(status_code=409, detail='Cannot delete an active run.')
+    run_store = request.app.state.run_store
+    run = await run_store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail='Run not found.')
+    await run_store.delete_run(run_id)
+    export_base = Path(request.app.state.settings.export_base_dir).resolve()
+    export_dir = export_base / run_id
+    if export_dir.exists():
+        try:
+            shutil.rmtree(export_dir)
+        except OSError:
+            request.app.state.logger.warning('Could not remove export directory %s', export_dir, exc_info=True)
+
+
 @router.get('/logs', response_model=LogResponse)
 async def get_logs(request: Request, lines: int = 100) -> LogResponse:
     log_file_path = Path(request.app.state.settings.log_file_path)
@@ -162,3 +189,25 @@ async def update_schedule(request: Request, payload: ScheduleUpdateRequest) -> S
         next_run_at=sync_service.next_scheduled_run_at,
         updated_at=sync_service.schedule_updated_at,
     )
+
+
+@router.get('/retry-config', response_model=RetryConfigResponse)
+async def get_retry_config(request: Request) -> RetryConfigResponse:
+    config = await request.app.state.run_store.get_retry_config()
+    return RetryConfigResponse(**config)
+
+
+@router.put('/retry-config', response_model=RetryConfigResponse)
+async def update_retry_config(request: Request, payload: RetryConfigUpdateRequest) -> RetryConfigResponse:
+    run_store = request.app.state.run_store
+    await run_store.update_retry_config(
+        max_retry_attempts=payload.max_retry_attempts,
+        max_retry_delay_seconds=payload.max_retry_delay_seconds,
+    )
+    exporter = request.app.state.exporter
+    exporter.update_retry_config(
+        max_retry_attempts=payload.max_retry_attempts,
+        max_retry_delay_seconds=payload.max_retry_delay_seconds,
+    )
+    config = await run_store.get_retry_config()
+    return RetryConfigResponse(**config)
