@@ -36,9 +36,13 @@ class SyncRunResponse(BaseModel):
     users_count: int | None = None
     groups_count: int | None = None
     memberships_count: int | None = None
+    roles_count: int | None = None
+    role_memberships_count: int | None = None
     users_file: str | None = None
     groups_file: str | None = None
     memberships_file: str | None = None
+    roles_file: str | None = None
+    role_memberships_file: str | None = None
     error: str | None = None
 
 

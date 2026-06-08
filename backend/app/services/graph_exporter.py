@@ -11,6 +11,10 @@ from azure.identity.aio import ClientSecretCredential
 from kiota_abstractions.api_error import APIError
 from kiota_abstractions.base_request_configuration import RequestConfiguration
 from msgraph import GraphServiceClient
+from msgraph.generated.directory_roles.directory_roles_request_builder import DirectoryRolesRequestBuilder
+from msgraph.generated.directory_roles.item.members.members_request_builder import (
+    MembersRequestBuilder as RoleMembersRequestBuilder,
+)
 from msgraph.generated.groups.groups_request_builder import GroupsRequestBuilder
 from msgraph.generated.groups.delta.delta_request_builder import DeltaRequestBuilder as GroupsDeltaRequestBuilder
 from msgraph.generated.groups.item.members.members_request_builder import MembersRequestBuilder
@@ -39,6 +43,8 @@ USER_COLUMNS = (
 )
 GROUP_COLUMNS = ('id', 'displayName', 'description', 'securityEnabled', 'mailEnabled')
 MEMBERSHIP_COLUMNS = ('group_id', 'user_id')
+ROLE_COLUMNS = ('id', 'roleTemplateId', 'displayName', 'description')
+ROLE_MEMBERSHIP_COLUMNS = ('role_id', 'user_id')
 
 
 @dataclass(slots=True)
@@ -46,9 +52,13 @@ class ExportResult:
     users_count: int
     groups_count: int
     memberships_count: int
+    roles_count: int
+    role_memberships_count: int
     users_file: str
     groups_file: str
     memberships_file: str
+    roles_file: str
+    role_memberships_file: str
 
 
 class GraphExportService:
@@ -75,7 +85,9 @@ class GraphExportService:
             users, users_delta_link = await self._fetch_users(client)
             groups, groups_delta_link = await self._fetch_groups(client)
             memberships = await self._fetch_memberships(client, groups)
-            result = self._write_exports(run_id, users, groups, memberships)
+            roles = await self._fetch_roles(client)
+            role_memberships = await self._fetch_role_memberships(client, roles)
+            result = self._write_exports(run_id, users, groups, memberships, roles, role_memberships)
 
             # Store delta tokens so future incremental syncs have a baseline.
             if run_store is not None:
@@ -157,7 +169,10 @@ class GraphExportService:
             groups = sorted(existing_groups.values(), key=lambda r: (r.get('displayName', ''), r.get('id', '')))
 
             memberships = await self._fetch_memberships(client, groups)
-            result = self._write_exports(run_id, users, groups, memberships)
+            # Roles and role memberships do not support delta queries; always re-fetch in full.
+            roles = await self._fetch_roles(client)
+            role_memberships = await self._fetch_role_memberships(client, roles)
+            result = self._write_exports(run_id, users, groups, memberships, roles, role_memberships)
 
             # Persist refreshed delta tokens.
             new_tokens: dict[str, str] = {}
@@ -377,6 +392,77 @@ class GraphExportService:
         ]
         return rows
 
+    async def _fetch_roles(self, client: GraphServiceClient) -> list[dict[str, str]]:
+        request_configuration = RequestConfiguration(
+            query_parameters=DirectoryRolesRequestBuilder.DirectoryRolesRequestBuilderGetQueryParameters(
+                select=['id', 'roleTemplateId', 'displayName', 'description'],
+                top=self._settings.graph_page_size,
+            )
+        )
+        response = await self._run_with_retry(
+            lambda: client.directory_roles.get(request_configuration=request_configuration),
+            operation_name='fetch roles',
+        )
+
+        rows: list[dict[str, str]] = []
+
+        def collect(role: Any) -> bool:
+            rows.append(self._role_to_row(role))
+            return True
+
+        await self._iterate_collection(response, client, collect, operation_name='fetch roles')
+        rows.sort(key=lambda row: (row['displayName'], row['id']))
+        return rows
+
+    async def _fetch_role_memberships(
+        self, client: GraphServiceClient, roles: list[dict[str, str]]
+    ) -> list[dict[str, str]]:
+        semaphore = asyncio.Semaphore(self._settings.membership_concurrency)
+        membership_pairs: set[tuple[str, str]] = set()
+
+        async def collect_role_members(role: dict[str, str]) -> None:
+            async with semaphore:
+                role_id = role['id']
+                request_configuration = RequestConfiguration(
+                    query_parameters=RoleMembersRequestBuilder.MembersRequestBuilderGetQueryParameters(
+                        select=['id'],
+                        top=self._settings.graph_page_size,
+                    )
+                )
+                response = await self._run_with_retry(
+                    lambda: client.directory_roles.by_directory_role_id(role_id).members.get(
+                        request_configuration=request_configuration,
+                    ),
+                    operation_name=f'fetch role memberships for {role_id}',
+                )
+                if response is None:
+                    return
+
+                def collect(member: Any) -> bool:
+                    user_id = to_csv_value(getattr(member, 'id', None))
+                    if not user_id:
+                        return True
+                    if getattr(member, 'odata_type', '') != '#microsoft.graph.user':
+                        return True
+                    membership_pairs.add((role_id, user_id))
+                    return True
+
+                await self._iterate_collection(
+                    response,
+                    client,
+                    collect,
+                    operation_name=f'fetch role memberships for {role_id}',
+                )
+                self._logger.info('Processed role membership page set for %s', role_id)
+
+        await asyncio.gather(*(collect_role_members(role) for role in roles))
+
+        rows = [
+            {'role_id': role_id, 'user_id': user_id}
+            for role_id, user_id in sorted(membership_pairs, key=lambda item: (item[0], item[1]))
+        ]
+        return rows
+
     async def _iterate_collection(
         self,
         response: Any,
@@ -454,6 +540,14 @@ class GraphExportService:
             'mailEnabled': to_csv_value(getattr(group, 'mail_enabled', None)),
         }
 
+    def _role_to_row(self, role: Any) -> dict[str, str]:
+        return {
+            'id': to_csv_value(getattr(role, 'id', None)),
+            'roleTemplateId': to_csv_value(getattr(role, 'role_template_id', None)),
+            'displayName': to_csv_value(getattr(role, 'display_name', None)),
+            'description': to_csv_value(getattr(role, 'description', None)),
+        }
+
     def _read_csv(self, file_path: Path, key_column: str) -> dict[str, dict[str, str]]:
         result: dict[str, dict[str, str]] = {}
         with file_path.open('r', newline='', encoding='utf-8') as csv_file:
@@ -472,6 +566,8 @@ class GraphExportService:
         users: list[dict[str, str]],
         groups: list[dict[str, str]],
         memberships: list[dict[str, str]],
+        roles: list[dict[str, str]],
+        role_memberships: list[dict[str, str]],
     ) -> ExportResult:
         run_directory = self._settings.export_base_dir / run_id
         latest_directory = self._settings.export_base_dir / 'latest'
@@ -481,18 +577,28 @@ class GraphExportService:
         users_file = self._write_csv(run_directory / 'users.csv', USER_COLUMNS, users)
         groups_file = self._write_csv(run_directory / 'groups.csv', GROUP_COLUMNS, groups)
         memberships_file = self._write_csv(run_directory / 'memberships.csv', MEMBERSHIP_COLUMNS, memberships)
+        roles_file = self._write_csv(run_directory / 'roles.csv', ROLE_COLUMNS, roles)
+        role_memberships_file = self._write_csv(
+            run_directory / 'role_memberships.csv', ROLE_MEMBERSHIP_COLUMNS, role_memberships
+        )
 
         shutil.copyfile(users_file, latest_directory / 'users.csv')
         shutil.copyfile(groups_file, latest_directory / 'groups.csv')
         shutil.copyfile(memberships_file, latest_directory / 'memberships.csv')
+        shutil.copyfile(roles_file, latest_directory / 'roles.csv')
+        shutil.copyfile(role_memberships_file, latest_directory / 'role_memberships.csv')
 
         return ExportResult(
             users_count=len(users),
             groups_count=len(groups),
             memberships_count=len(memberships),
+            roles_count=len(roles),
+            role_memberships_count=len(role_memberships),
             users_file=str(users_file),
             groups_file=str(groups_file),
             memberships_file=str(memberships_file),
+            roles_file=str(roles_file),
+            role_memberships_file=str(role_memberships_file),
         )
 
     def _write_csv(self, file_path: Path, columns: tuple[str, ...], rows: list[dict[str, str]]) -> Path:

@@ -27,9 +27,13 @@ class RunStore:
                     users_count INTEGER,
                     groups_count INTEGER,
                     memberships_count INTEGER,
+                    roles_count INTEGER,
+                    role_memberships_count INTEGER,
                     users_file TEXT,
                     groups_file TEXT,
                     memberships_file TEXT,
+                    roles_file TEXT,
+                    role_memberships_file TEXT,
                     error TEXT,
                     sync_type TEXT NOT NULL DEFAULT 'full'
                 )
@@ -41,6 +45,18 @@ class RunStore:
             except aiosqlite.OperationalError as exc:
                 if 'duplicate column name' not in str(exc).lower():
                     raise
+
+            for col in (
+                'roles_count INTEGER',
+                'role_memberships_count INTEGER',
+                'roles_file TEXT',
+                'role_memberships_file TEXT',
+            ):
+                try:
+                    await db.execute(f'ALTER TABLE sync_runs ADD COLUMN {col}')
+                except aiosqlite.OperationalError as exc:
+                    if 'duplicate column name' not in str(exc).lower():
+                        raise
 
             await db.execute(
                 '''

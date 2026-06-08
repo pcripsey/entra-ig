@@ -32,9 +32,13 @@ type SyncRunResponse = {
   users_count: number | null
   groups_count: number | null
   memberships_count: number | null
+  roles_count?: number | null
+  role_memberships_count?: number | null
   users_file: string | null
   groups_file: string | null
   memberships_file: string | null
+  roles_file?: string | null
+  role_memberships_file?: string | null
   error: string | null
 }
 
@@ -426,12 +430,14 @@ function App() {
                   <th>Users</th>
                   <th>Groups</th>
                   <th>Memberships</th>
+                  <th>Roles</th>
+                  <th>Role memberships</th>
                 </tr>
               </thead>
               <tbody>
                 {runs.length === 0 ? (
                   <tr>
-                    <td colSpan={8}>No sync runs recorded.</td>
+                    <td colSpan={10}>No sync runs recorded.</td>
                   </tr>
                 ) : (
                   runs.map((run) => (
@@ -444,6 +450,8 @@ function App() {
                       <td>{run.users_count ?? '—'}</td>
                       <td>{run.groups_count ?? '—'}</td>
                       <td>{run.memberships_count ?? '—'}</td>
+                      <td>{run.roles_count ?? '—'}</td>
+                      <td>{run.role_memberships_count ?? '—'}</td>
                     </tr>
                   ))
                 )}
@@ -469,6 +477,14 @@ function App() {
             <div>
               <dt>Memberships CSV</dt>
               <dd>{status?.latest_run?.memberships_file ?? 'Awaiting first export'}</dd>
+            </div>
+            <div>
+              <dt>Roles CSV</dt>
+              <dd>{status?.latest_run?.roles_file ?? 'Awaiting first export'}</dd>
+            </div>
+            <div>
+              <dt>Role memberships CSV</dt>
+              <dd>{status?.latest_run?.role_memberships_file ?? 'Awaiting first export'}</dd>
             </div>
             <div>
               <dt>Last error</dt>
