@@ -143,9 +143,10 @@ async def delete_run(run_id: str, request: Request) -> None:
     if run is None:
         raise HTTPException(status_code=404, detail='Run not found.')
     await run_store.delete_run(run_id)
+    # Use the DB-sourced run ID (trusted) to construct the export directory path.
+    db_run_id: str = run['id']
     export_base = Path(request.app.state.settings.export_base_dir).resolve()
-    safe_run_id = _RUN_ID_RE.match(run_id).group()  # validated hex-only string
-    export_dir = export_base / safe_run_id
+    export_dir = export_base / db_run_id
     if export_dir.exists():
         try:
             shutil.rmtree(export_dir)

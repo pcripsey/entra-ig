@@ -161,7 +161,7 @@ class RunStore:
         async with aiosqlite.connect(self._database_path) as db:
             cursor = await db.execute('DELETE FROM sync_runs WHERE id = ?', (run_id,))
             await db.commit()
-        return cursor.rowcount > 0
+            return cursor.rowcount > 0
 
     async def get_schedule(self) -> dict[str, Any]:
         async with aiosqlite.connect(self._database_path) as db:
