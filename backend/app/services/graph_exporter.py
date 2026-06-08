@@ -396,7 +396,6 @@ class GraphExportService:
         request_configuration = RequestConfiguration(
             query_parameters=DirectoryRolesRequestBuilder.DirectoryRolesRequestBuilderGetQueryParameters(
                 select=['id', 'roleTemplateId', 'displayName', 'description'],
-                top=self._settings.graph_page_size,
             )
         )
         response = await self._run_with_retry(
