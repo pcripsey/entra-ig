@@ -1,6 +1,12 @@
-# entra-ig Beta
+# entra-ig
 
 Production-ready Microsoft Entra ID export service for OpenText Identity Governance CSV collection.
+
+![Python](https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6?logo=typescript&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-multi--stage-2496ED?logo=docker&logoColor=white)
 
 ## What it does
 
@@ -17,79 +23,116 @@ Production-ready Microsoft Entra ID export service for OpenText Identity Governa
 - Supports a configurable automatic refresh schedule with selectable sync type managed from the admin console
 - Ships as a Docker container with a multi-stage build
 
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.12, FastAPI, Uvicorn |
+| Graph API client | `msgraph-sdk`, `azure-identity` |
+| Database | SQLite via `aiosqlite` |
+| Configuration | `pydantic-settings` |
+| Frontend | React 19, TypeScript ~6.0, Vite 8 |
+| Container | Docker multi-stage (Node 24 → Python 3.12-slim) |
+| Registry | GitHub Container Registry (GHCR) |
+
+## Quick start
+
+### Pre-built image (recommended)
+
+```bash
+cp .env.example .env
+# Edit .env with your Entra ID credentials
+docker compose up
+```
+
+Open `http://localhost:8000` to access the admin console.
+
+### Bare-metal
+
+```bash
+# Backend
+python -m pip install -e .[dev]
+python -m uvicorn app.main:app --app-dir backend --reload
+
+# Frontend (separate terminal)
+cd frontend
+npm install
+VITE_API_BASE_URL=http://localhost:8000/api npm run dev
+```
+
 ## Architecture and flow
 
 ### Component overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Admin console (React)                    │
-│  ┌──────────────┐  ┌──────────────────────┐  ┌──────────────┐  │
-│  │  Run export  │  │   Refresh schedule   │  │   Run log /  │  │
-│  │  [Full|Incr] │  │ [Full|Incr] interval │  │   history    │  │
-│  └──────┬───────┘  └──────────┬───────────┘  └──────────────┘  │
-└─────────┼────────────────────┼─────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                        Admin console (React)                   │
+│  ┌──────────────┐  ┌──────────────────────┐  ┌──────────────┐ │
+│  │  Run export  │  │   Refresh schedule   │  │   Run log /  │ │
+│  │  [Full|Incr] │  │ [Full|Incr] interval │  │   history    │ │
+│  └──────┬───────┘  └──────────┬───────────┘  └──────────────┘ │
+└─────────┼────────────────────┼────────────────────────────────┘
           │  POST /api/sync     │  PUT /api/schedule
           ▼                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    FastAPI  (routes.py)                         │
-└─────────────────────────────┬───────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                    FastAPI  (routes.py)                        │
+└─────────────────────────────┬──────────────────────────────────┘
                               │
                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    SyncService                                  │
-│  ┌────────────────────────┐   ┌───────────────────────────────┐ │
-│  │   start(sync_type)     │   │      _scheduler_loop          │ │
-│  │   creates DB run row   │   │  fires on interval, passes    │ │
+┌────────────────────────────────────────────────────────────────┐
+│                    SyncService                                 │
+│  ┌────────────────────────┐   ┌──────────────────────────────┐ │
+│  │   start(sync_type)     │   │      _scheduler_loop         │ │
+│  │   creates DB run row   │   │  fires on interval, passes   │ │
 │  │   spawns async task    │   │  schedule_sync_type to start()│ │
-│  └──────────┬─────────────┘   └───────────────────────────────┘ │
+│  └──────────┬─────────────┘   └──────────────────────────────┘ │
 └─────────────┼───────────────────────────────────────────────────┘
               │  export(run_id, sync_type, run_store)
               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                  GraphExportService                             │
-│                                                                 │
-│   sync_type == "full"            sync_type == "incremental"     │
-│   ┌──────────────────────┐       ┌────────────────────────────┐ │
-│   │ GET /users           │       │ no stored delta tokens?    │ │
-│   │ GET /groups          │       │  └─► fall back to full     │ │
-│   │ GET /groups/*/members│       │ GET /users/delta?token     │ │
-│   │ write CSVs           │       │ GET /groups/delta?token    │ │
-│   │ store delta tokens   │       │ load latest/ CSVs          │ │
-│   └──────────────────────┘       │ merge adds/updates/deletes │ │
-│                                  │ GET /groups/*/members(all) │ │
-│                                  │ write CSVs                 │ │
-│                                  │ store new delta tokens     │ │
-│                                  └────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                  GraphExportService                            │
+│                                                                │
+│   sync_type == "full"            sync_type == "incremental"    │
+│   ┌──────────────────────┐       ┌───────────────────────────┐ │
+│   │ GET /users           │       │ no stored delta tokens?   │ │
+│   │ GET /groups          │       │  └─► fall back to full    │ │
+│   │ GET /groups/*/members│       │ GET /users/delta?token    │ │
+│   │ write CSVs           │       │ GET /groups/delta?token   │ │
+│   │ store delta tokens   │       │ load latest/ CSVs         │ │
+│   └──────────────────────┘       │ merge adds/updates/deletes│ │
+│                                  │ GET /groups/*/members(all)│ │
+│                                  │ write CSVs                │ │
+│                                  │ store new delta tokens    │ │
+│                                  └───────────────────────────┘ │
+└────────────────────────────────────────────────────────────────┘
               │
               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              SQLite  (RunStore / database.py)                   │
-│  sync_runs     schedule_config     delta_tokens                 │
-│  id            enabled             resource (users|groups)      │
-│  status        interval_minutes    token  (delta link URL)      │
-│  sync_type     sync_type           updated_at                   │
-│  started_at    updated_at                                       │
-│  completed_at                                                   │
-│  users_count                                                    │
-│  …                                                              │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│              SQLite  (RunStore / database.py)                  │
+│  sync_runs     schedule_config     delta_tokens                │
+│  id            enabled             resource (users|groups)     │
+│  status        interval_minutes    token  (delta link URL)     │
+│  sync_type     sync_type           updated_at                  │
+│  started_at    updated_at                                      │
+│  completed_at                                                  │
+│  users_count                                                   │
+│  …                                                             │
+└────────────────────────────────────────────────────────────────┘
               │
               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               File system  (data/exports/)                      │
-│  <run_id>/users.csv                                             │
-│  <run_id>/groups.csv                                            │
-│  <run_id>/memberships.csv                                       │
-│  <run_id>/roles.csv                                             │
-│  <run_id>/role_memberships.csv                                  │
-│  latest/users.csv      ◄── always reflects most recent run     │
-│  latest/groups.csv                                              │
+┌────────────────────────────────────────────────────────────────┐
+│               File system  (data/exports/)                     │
+│  <run_id>/users.csv                                            │
+│  <run_id>/groups.csv                                           │
+│  <run_id>/memberships.csv                                      │
+│  <run_id>/roles.csv                                            │
+│  <run_id>/role_memberships.csv                                 │
+│  latest/users.csv      ◄── always reflects most recent run    │
+│  latest/groups.csv                                             │
 │  latest/memberships.csv                                        │
-│  latest/roles.csv                                               │
-│  latest/role_memberships.csv                                    │
-└─────────────────────────────────────────────────────────────────┘
+│  latest/roles.csv                                              │
+│  latest/role_memberships.csv                                   │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ### Sync type decision flow
@@ -170,25 +213,77 @@ Columns:
 > [!NOTE]
 > The app registration used with `GRAPH_SCOPE=https://graph.microsoft.com/.default` must include `RoleManagement.Read.Directory` in addition to `User.Read.All` and `Group.Read.All`.
 
+## API reference
+
+All endpoints are served under `/api`.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/health` | Health check; reports Graph reachability and latest run status |
+| `GET` | `/api/config` | Active configuration (secrets masked) |
+| `POST` | `/api/connection/test` | Test Graph connectivity with supplied credentials |
+| `GET` | `/api/status` | Sync status, live progress counters, and schedule state |
+| `POST` | `/api/sync` | Start a sync (`{"sync_type":"full"}` or `{"sync_type":"incremental"}`) |
+| `GET` | `/api/runs` | List the 20 most recent sync runs |
+| `GET` | `/api/runs/{run_id}` | Get a specific sync run |
+| `DELETE` | `/api/runs/{run_id}` | Delete a completed run and its export files |
+| `GET` | `/api/logs` | Tail the application log (`?lines=N`, default 100) |
+| `GET` | `/api/schedule` | Get the automatic refresh schedule |
+| `PUT` | `/api/schedule` | Update the schedule (`enabled`, `interval_minutes`, `sync_type`) |
+| `GET` | `/api/retry-config` | Get Graph retry settings |
+| `PUT` | `/api/retry-config` | Update `max_retry_attempts` and `max_retry_delay_seconds` |
+
 ## Environment variables
 
 Copy `.env.example` to `.env` and set:
 
-- `TENANT_ID`
-- `CLIENT_ID`
-- `CLIENT_SECRET`
-- `GRAPH_SCOPE`
-- `GRAPH_PAGE_SIZE`
-- `MAX_RETRY_ATTEMPTS`
-- `MAX_RETRY_DELAY_SECONDS`
-- `MEMBERSHIP_CONCURRENCY`
-- `SCHEDULE_ENABLED`
-- `SCHEDULE_INTERVAL_MINUTES`
-- `EXPORT_BASE_DIR`
-- `DATABASE_PATH`
-- `LOG_FILE_PATH`
-- `FRONTEND_DIST`
-- `LOG_LEVEL`
+| Variable | Default | Description |
+|---|---|---|
+| `TENANT_ID` | _(required)_ | Azure AD / Entra tenant ID |
+| `CLIENT_ID` | _(required)_ | App registration client ID |
+| `CLIENT_SECRET` | _(required)_ | App registration client secret |
+| `GRAPH_SCOPE` | `https://graph.microsoft.com/.default` | OAuth2 scope for Microsoft Graph |
+| `GRAPH_PAGE_SIZE` | `999` | Page size for Graph list requests (max 999) |
+| `MAX_RETRY_ATTEMPTS` | `5` | Maximum retries for throttled (`HTTP 429`) Graph requests |
+| `MAX_RETRY_DELAY_SECONDS` | `32` | Maximum backoff delay per retry (seconds) |
+| `MEMBERSHIP_CONCURRENCY` | `4` | Number of concurrent group membership fetches |
+| `SCHEDULE_ENABLED` | `false` | Enable automatic refresh schedule on startup |
+| `SCHEDULE_INTERVAL_MINUTES` | `60` | Interval between scheduled syncs (minutes) |
+| `EXPORT_BASE_DIR` | `data/exports` | Root directory for CSV output |
+| `DATABASE_PATH` | `data/app.db` | SQLite database file path |
+| `LOG_FILE_PATH` | `logs/app.log` | Application log file path |
+| `FRONTEND_DIST` | `frontend/dist` | Path to compiled React assets served by FastAPI |
+| `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+
+## Project structure
+
+```
+entra-ig/
+├── backend/
+│   ├── app/
+│   │   ├── api/
+│   │   │   └── routes.py          # FastAPI route handlers
+│   │   ├── services/
+│   │   │   ├── graph_exporter.py  # Microsoft Graph export and delta logic
+│   │   │   ├── sync_service.py    # Sync orchestration and auto-scheduler
+│   │   │   └── sanitizer.py       # CSV value sanitization (CR/LF stripping)
+│   │   ├── config.py              # pydantic-settings configuration
+│   │   ├── database.py            # SQLite RunStore via aiosqlite
+│   │   ├── logging_config.py      # Logging setup
+│   │   ├── models.py              # Pydantic request/response models
+│   │   └── main.py                # FastAPI application entry point
+│   └── tests/
+│       ├── test_graph_exporter.py
+│       └── test_sanitizer.py
+├── frontend/
+│   └── src/
+│       ├── App.tsx                # Single-page admin console (React)
+│       └── main.tsx               # React entry point
+├── .env.example
+├── Dockerfile                     # Multi-stage build (Node 24 + Python 3.12-slim)
+├── docker-compose.yml
+└── pyproject.toml
+```
 
 ## Local development
 
@@ -262,3 +357,7 @@ docker run --rm -p 8000:8000 --env-file .env \
   -v $(pwd)/logs:/app/logs \
   entra-ig
 ```
+
+## CI/CD
+
+A GitHub Actions workflow (`.github/workflows/docker.yml`) builds and publishes the Docker image to GHCR on every push to `main`. The image is tagged `latest`.
