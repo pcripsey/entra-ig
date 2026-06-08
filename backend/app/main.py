@@ -26,6 +26,12 @@ async def lifespan(app: FastAPI):
     run_store = RunStore(settings)
     await run_store.initialize()
     exporter = GraphExportService(settings)
+    # Apply any persisted retry configuration from the database.
+    retry_config = await run_store.get_retry_config()
+    exporter.update_retry_config(
+        max_retry_attempts=retry_config['max_retry_attempts'],
+        max_retry_delay_seconds=retry_config['max_retry_delay_seconds'],
+    )
     sync_service = SyncService(run_store, exporter)
     await sync_service.initialize()
 

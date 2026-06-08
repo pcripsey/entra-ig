@@ -13,6 +13,8 @@ class RunStore:
         self._database_path = settings.database_path
         self._default_schedule_enabled = settings.schedule_enabled
         self._default_schedule_interval_minutes = settings.schedule_interval_minutes
+        self._default_max_retry_attempts = settings.max_retry_attempts
+        self._default_max_retry_delay_seconds = settings.max_retry_delay_seconds
 
     async def initialize(self) -> None:
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +88,17 @@ class RunStore:
                 '''
             )
 
+            await db.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS retry_config (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    max_retry_attempts INTEGER NOT NULL,
+                    max_retry_delay_seconds INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                '''
+            )
+
             cursor = await db.execute('SELECT COUNT(*) FROM schedule_config')
             row = await cursor.fetchone()
             if row[0] == 0:
@@ -144,6 +157,12 @@ class RunStore:
             row = await cursor.fetchone()
         return dict(row) if row else None
 
+    async def delete_run(self, run_id: str) -> bool:
+        async with aiosqlite.connect(self._database_path) as db:
+            cursor = await db.execute('DELETE FROM sync_runs WHERE id = ?', (run_id,))
+            await db.commit()
+        return cursor.rowcount > 0
+
     async def get_schedule(self) -> dict[str, Any]:
         async with aiosqlite.connect(self._database_path) as db:
             db.row_factory = aiosqlite.Row
@@ -196,4 +215,39 @@ class RunStore:
                     ''',
                     (resource, token, updated_at),
                 )
+            await db.commit()
+
+    async def get_retry_config(self) -> dict[str, Any]:
+        async with aiosqlite.connect(self._database_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                'SELECT max_retry_attempts, max_retry_delay_seconds, updated_at FROM retry_config WHERE id = 1'
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return {
+                'max_retry_attempts': self._default_max_retry_attempts,
+                'max_retry_delay_seconds': self._default_max_retry_delay_seconds,
+                'updated_at': None,
+            }
+        return {
+            'max_retry_attempts': row['max_retry_attempts'],
+            'max_retry_delay_seconds': row['max_retry_delay_seconds'],
+            'updated_at': row['updated_at'],
+        }
+
+    async def update_retry_config(self, *, max_retry_attempts: int, max_retry_delay_seconds: int) -> None:
+        updated_at = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self._database_path) as db:
+            await db.execute(
+                '''
+                INSERT INTO retry_config (id, max_retry_attempts, max_retry_delay_seconds, updated_at)
+                VALUES (1, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    max_retry_attempts = excluded.max_retry_attempts,
+                    max_retry_delay_seconds = excluded.max_retry_delay_seconds,
+                    updated_at = excluded.updated_at
+                ''',
+                (max_retry_attempts, max_retry_delay_seconds, updated_at),
+            )
             await db.commit()

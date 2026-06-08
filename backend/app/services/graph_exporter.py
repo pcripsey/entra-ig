@@ -80,6 +80,12 @@ class GraphExportService:
     def __init__(self, settings: Settings):
         self._settings = settings
         self._logger = logging.getLogger(LOGGER_NAME)
+        self._max_retry_attempts: int = settings.max_retry_attempts
+        self._max_retry_delay_seconds: int = settings.max_retry_delay_seconds
+
+    def update_retry_config(self, *, max_retry_attempts: int, max_retry_delay_seconds: int) -> None:
+        self._max_retry_attempts = max_retry_attempts
+        self._max_retry_delay_seconds = max_retry_delay_seconds
 
     async def export(self, run_id: str, sync_type: str = 'full', run_store: RunStore | None = None, progress: LiveProgress | None = None) -> ExportResult:
         if not self._settings.graph_configured:
@@ -578,8 +584,8 @@ class GraphExportService:
           admin console can surface it in real time.
         """
         delay_seconds = 1.0
-        max_attempts = self._settings.max_retry_attempts
-        max_delay = self._settings.max_retry_delay_seconds
+        max_attempts = self._max_retry_attempts
+        max_delay = self._max_retry_delay_seconds
 
         for attempt in range(1, max_attempts + 1):
             try:

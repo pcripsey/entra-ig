@@ -104,3 +104,14 @@ class ConnectionTestRequest(BaseModel):
 class ConnectionTestResponse(BaseModel):
     success: bool
     detail: str
+
+
+class RetryConfigResponse(BaseModel):
+    max_retry_attempts: int
+    max_retry_delay_seconds: int
+    updated_at: str | None = None
+
+
+class RetryConfigUpdateRequest(BaseModel):
+    max_retry_attempts: int = Field(ge=1, le=20)
+    max_retry_delay_seconds: int = Field(ge=1, le=300)

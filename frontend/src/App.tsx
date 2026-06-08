@@ -74,6 +74,12 @@ type ScheduleResponse = {
   updated_at: string | null
 }
 
+type RetryConfigResponse = {
+  max_retry_attempts: number
+  max_retry_delay_seconds: number
+  updated_at: string | null
+}
+
 type ConnectionTestResponse = {
   success: boolean
   detail: string
@@ -94,6 +100,10 @@ async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(detail || `Request failed with ${response.status}`)
   }
 
+  if (response.status === 204) {
+    return undefined as T
+  }
+
   return (await response.json()) as T
 }
 
@@ -112,6 +122,10 @@ function App() {
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
   const [scheduleIntervalMinutes, setScheduleIntervalMinutes] = useState('60')
   const [scheduleSyncType, setScheduleSyncType] = useState<SyncType>('full')
+  const [retryConfig, setRetryConfig] = useState<RetryConfigResponse | null>(null)
+  const [retryAttempts, setRetryAttempts] = useState('5')
+  const [retryDelaySeconds, setRetryDelaySeconds] = useState('32')
+  const [savingRetryConfig, setSavingRetryConfig] = useState(false)
   const [syncType, setSyncType] = useState<SyncType>('full')
   const [tenantId, setTenantId] = useState('')
   const [clientId, setClientId] = useState('')
@@ -127,13 +141,14 @@ function App() {
   const loadDashboard = async () => {
     try {
       setError(null)
-      const [configData, healthData, statusData, runData, logData, scheduleData] = await Promise.all([
+      const [configData, healthData, statusData, runData, logData, scheduleData, retryConfigData] = await Promise.all([
         fetchJson<ConfigResponse>('/config'),
         fetchJson<HealthResponse>('/health'),
         fetchJson<SyncStatusResponse>('/status'),
         fetchJson<SyncRunResponse[]>('/runs'),
         fetchJson<LogResponse>('/logs?lines=200'),
         fetchJson<ScheduleResponse>('/schedule'),
+        fetchJson<RetryConfigResponse>('/retry-config'),
       ])
       setConfig(configData)
       setTenantId(configData.tenant_id)
@@ -147,6 +162,9 @@ function App() {
       setScheduleEnabled(scheduleData.enabled)
       setScheduleIntervalMinutes(String(scheduleData.interval_minutes))
       setScheduleSyncType((scheduleData.sync_type as SyncType) ?? 'full')
+      setRetryConfig(retryConfigData)
+      setRetryAttempts(String(retryConfigData.max_retry_attempts))
+      setRetryDelaySeconds(String(retryConfigData.max_retry_delay_seconds))
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load dashboard data.')
     } finally {
@@ -227,6 +245,37 @@ function App() {
       setError(connectionError instanceof Error ? connectionError.message : 'Unable to test the connection.')
     } finally {
       setTestingConnection(false)
+    }
+  }
+
+  const saveRetryConfig = async () => {
+    try {
+      setSavingRetryConfig(true)
+      setError(null)
+      const data = await fetchJson<RetryConfigResponse>('/retry-config', {
+        method: 'PUT',
+        body: JSON.stringify({
+          max_retry_attempts: Number(retryAttempts),
+          max_retry_delay_seconds: Number(retryDelaySeconds),
+        }),
+      })
+      setRetryConfig(data)
+      setRetryAttempts(String(data.max_retry_attempts))
+      setRetryDelaySeconds(String(data.max_retry_delay_seconds))
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : 'Unable to save retry configuration.')
+    } finally {
+      setSavingRetryConfig(false)
+    }
+  }
+
+  const deleteRun = async (runId: string) => {
+    try {
+      setError(null)
+      await fetchJson(`/runs/${runId}`, { method: 'DELETE' })
+      await loadDashboard()
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete run.')
     }
   }
 
@@ -439,6 +488,42 @@ function App() {
           </div>
         </article>
 
+        <article className="panel">
+          <div className="panel-header">
+            <h2>Retry configuration</h2>
+            <span className="pill neutral">Throttle control</span>
+          </div>
+          <div className="schedule-form">
+            <label>
+              <span>Max retry attempts</span>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={retryAttempts}
+                onChange={(event) => setRetryAttempts(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Max retry delay (seconds)</span>
+              <input
+                type="number"
+                min={1}
+                max={300}
+                value={retryDelaySeconds}
+                onChange={(event) => setRetryDelaySeconds(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Last updated</span>
+              <input type="text" disabled value={formatDate(retryConfig?.updated_at ?? null)} />
+            </label>
+            <button className="secondary-action" onClick={() => void saveRetryConfig()} disabled={savingRetryConfig}>
+              {savingRetryConfig ? 'Saving…' : 'Save retry config'}
+            </button>
+          </div>
+        </article>
+
         <article className="panel wide">
           <div className="panel-header">
             <h2>Recent export runs</h2>
@@ -458,12 +543,13 @@ function App() {
                   <th>Memberships</th>
                   <th>Roles</th>
                   <th>Role memberships</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {runs.length === 0 ? (
                   <tr>
-                    <td colSpan={10}>No sync runs recorded.</td>
+                    <td colSpan={11}>No sync runs recorded.</td>
                   </tr>
                 ) : (
                   runs.map((run) => (
@@ -478,6 +564,16 @@ function App() {
                       <td>{run.memberships_count ?? '—'}</td>
                       <td>{run.roles_count ?? '—'}</td>
                       <td>{run.role_memberships_count ?? '—'}</td>
+                      <td>
+                        <button
+                          className="secondary-action"
+                          onClick={() => void deleteRun(run.id)}
+                          disabled={run.id === status?.active_run_id}
+                          title={run.id === status?.active_run_id ? 'Cannot delete an active run' : 'Delete run'}
+                        >
+                          Delete
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
