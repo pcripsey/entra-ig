@@ -38,11 +38,17 @@ class SyncRunResponse(BaseModel):
     memberships_count: int | None = None
     roles_count: int | None = None
     role_memberships_count: int | None = None
-    users_file: str | None = None
-    groups_file: str | None = None
-    memberships_file: str | None = None
-    roles_file: str | None = None
-    role_memberships_file: str | None = None
+    nested_groups_count: int | None = None
+    identity_file: str | None = None
+    account_file: str | None = None
+    group_file: str | None = None
+    group_membership_file: str | None = None
+    parent_child_group_file: str | None = None
+    permission_file: str | None = None
+    holder_to_permission_file: str | None = None
+    permission_to_holder_file: str | None = None
+    permission_hierarchy_cp_file: str | None = None
+    permission_hierarchy_pc_file: str | None = None
     error: str | None = None
 
 

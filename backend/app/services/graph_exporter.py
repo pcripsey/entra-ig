@@ -41,11 +41,165 @@ USER_COLUMNS = (
     'jobTitle',
     'department',
     'accountEnabled',
+    'givenName',
+    'surname',
+    'mailNickname',
+    'employeeId',
+    'employeeType',
+    'companyName',
+    'streetAddress',
+    'officeLocation',
+    'businessPhone',
+    'mobilePhone',
+    'preferredLanguage',
+    'country',
+    'city',
+    'state',
+    'onPremisesDistinguishedName',
+    'onPremisesImmutableId',
+    'userType',
+    'otherMails',
+    'sapId',
+    'managerId',
 )
-GROUP_COLUMNS = ('id', 'displayName', 'description', 'securityEnabled', 'mailEnabled')
+GROUP_COLUMNS = (
+    'id',
+    'displayName',
+    'description',
+    'securityEnabled',
+    'mailEnabled',
+    'mailNickname',
+    'onPremisesObjectIdentifier',
+    'onPremisesDistinguishedName',
+)
 MEMBERSHIP_COLUMNS = ('group_id', 'user_id')
 ROLE_COLUMNS = ('id', 'roleTemplateId', 'displayName', 'description')
 ROLE_MEMBERSHIP_COLUMNS = ('role_id', 'user_id')
+
+# IG output column definitions
+IDENTITY_COLUMNS = (
+    'identityId',
+    'employeeNumber',
+    'company',
+    'street',
+    'cn',
+    'AzureUserID',
+    'AzureMailNickname',
+    'hrEmpNumber',
+    'department',
+    'ldapDN',
+    'email',
+    'employeeType',
+    'firstName',
+    'fullName',
+    'objectGUID',
+    'phoneHome',
+    'jobCode',
+    'lastName',
+    'location',
+    'middleName',
+    'phoneOffice',
+    'phoneMobile',
+    'preferredLocale',
+    'provisioningID',
+    'secondarySupervisorId',
+    'primarySupervisorId',
+    'affiliatedIdentity',
+    'employeeStatus',
+    'country',
+    'city',
+    'state',
+    'geoLocation',
+    'userRisk',
+    'workforceID',
+    'idmDN',
+    'idmTreeName',
+    'loginAttribute',
+    'title',
+)
+
+IG_ACCOUNT_COLUMNS = (
+    'accountId',
+    'displayName',
+    'description',
+    'type',
+    'risk',
+    'cost',
+    'SAP_ID',
+    'aliases',
+    'connectedAccountProvisioningID',
+    'disabled',
+    'privileged',
+    'state',
+    'accountProvisioningID',
+    'accountUserMapping',
+    'accountCustodianMapping',
+    'idmAccountID',
+    'provisioningDriverID',
+    'provisioningDriverLogicalID',
+)
+
+IG_GROUP_COLUMNS = (
+    'groupId',
+    'groupOwners',
+    'objectGUID',
+    'groupMembers',
+    'name',
+    'longDescription',
+    'ldapDN',
+    'alternateName',
+    'shortDescription',
+)
+
+IG_GROUP_MEMBERSHIP_COLUMNS = ('groupId', 'members')
+IG_PARENT_CHILD_GROUP_COLUMNS = ('parentId', 'childId')
+
+IG_PERMISSION_COLUMNS = (
+    'permissionId',
+    'displayName',
+    'description',
+    'type',
+    'assignable',
+    'owner',
+    'risk',
+    'cost',
+    'holder',
+    'childPermissionId',
+    'parentPermissionId',
+    'hiddenFromCatalog',
+    'provisioningTargetAttribute',
+    'provisionedByThisPermission',
+    'nativeValueForProvisioning',
+    'uniqueApplicationID',
+    'staticPermissionFlag',
+    'provisioningDriverID',
+    'provisioningApplicationLogicalID',
+)
+
+IG_HOLDER_TO_PERMISSION_COLUMNS = (
+    'assignmentId',
+    'accountId',
+    'permissionId',
+    'usage',
+    'risk',
+    'revocable',
+    'assignmentType',
+    'assignmentValue',
+)
+
+IG_PERMISSION_TO_HOLDER_COLUMNS = (
+    'permissionId',
+    'accountId',
+    'assignmentId',
+    'assignmentType',
+    'assignmentRisk',
+    'usage',
+    'revocable',
+    'assignmentValue',
+)
+
+IG_PERMISSION_HIERARCHY_COLUMNS = ('permissionId', 'parentPermissionId', 'assignmentType')
+IG_PERMISSION_HIERARCHY_PC_COLUMNS = ('permissionId', 'childPermissionId', 'assignmentType')
 
 
 @dataclass(slots=True)
@@ -55,6 +209,17 @@ class ExportResult:
     memberships_count: int
     roles_count: int
     role_memberships_count: int
+    nested_groups_count: int
+    identity_file: str
+    account_file: str
+    group_file: str
+    group_membership_file: str
+    parent_child_group_file: str
+    permission_file: str
+    holder_to_permission_file: str
+    permission_to_holder_file: str
+    permission_hierarchy_cp_file: str
+    permission_hierarchy_pc_file: str
     users_file: str
     groups_file: str
     memberships_file: str
@@ -113,6 +278,12 @@ class GraphExportService:
                 progress.stage = 'Fetching memberships'
             memberships = await self._fetch_memberships(client, groups, progress)
             if progress is not None:
+                progress.stage = 'Fetching group owners'
+            group_owners = await self._fetch_group_owners(client, groups, progress)
+            if progress is not None:
+                progress.stage = 'Fetching nested groups'
+            nested_groups = await self._fetch_nested_groups(client, groups, progress)
+            if progress is not None:
                 progress.stage = 'Fetching roles'
             roles = await self._fetch_roles(client, progress)
             if progress is not None:
@@ -120,7 +291,16 @@ class GraphExportService:
             role_memberships = await self._fetch_role_memberships(client, roles, progress)
             if progress is not None:
                 progress.stage = 'Writing exports'
-            result = self._write_exports(run_id, users, groups, memberships, roles, role_memberships)
+            result = self._write_exports(
+                run_id,
+                users,
+                groups,
+                memberships,
+                roles,
+                role_memberships,
+                group_owners,
+                nested_groups,
+            )
 
             # Store delta tokens so future incremental syncs have a baseline.
             if run_store is not None:
@@ -208,6 +388,12 @@ class GraphExportService:
             if progress is not None:
                 progress.stage = 'Fetching memberships'
             memberships = await self._fetch_memberships(client, groups, progress)
+            if progress is not None:
+                progress.stage = 'Fetching group owners'
+            group_owners = await self._fetch_group_owners(client, groups, progress)
+            if progress is not None:
+                progress.stage = 'Fetching nested groups'
+            nested_groups = await self._fetch_nested_groups(client, groups, progress)
             # Roles and role memberships do not support delta queries; always re-fetch in full.
             if progress is not None:
                 progress.stage = 'Fetching roles'
@@ -217,7 +403,16 @@ class GraphExportService:
             role_memberships = await self._fetch_role_memberships(client, roles, progress)
             if progress is not None:
                 progress.stage = 'Writing exports'
-            result = self._write_exports(run_id, users, groups, memberships, roles, role_memberships)
+            result = self._write_exports(
+                run_id,
+                users,
+                groups,
+                memberships,
+                roles,
+                role_memberships,
+                group_owners,
+                nested_groups,
+            )
 
             # Persist refreshed delta tokens.
             new_tokens: dict[str, str] = {}
@@ -289,7 +484,35 @@ class GraphExportService:
     async def _fetch_users(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> tuple[list[dict[str, str]], str | None]:
         request_configuration = RequestConfiguration(
             query_parameters=UsersRequestBuilder.UsersRequestBuilderGetQueryParameters(
-                select=['id', 'userPrincipalName', 'displayName', 'mail', 'jobTitle', 'department', 'accountEnabled'],
+                select=[
+                    'id',
+                    'userPrincipalName',
+                    'displayName',
+                    'mail',
+                    'jobTitle',
+                    'department',
+                    'accountEnabled',
+                    'givenName',
+                    'surname',
+                    'mailNickname',
+                    'employeeId',
+                    'employeeType',
+                    'companyName',
+                    'streetAddress',
+                    'officeLocation',
+                    'businessPhones',
+                    'mobilePhone',
+                    'preferredLanguage',
+                    'country',
+                    'city',
+                    'state',
+                    'onPremisesDistinguishedName',
+                    'onPremisesImmutableId',
+                    'userType',
+                    'otherMails',
+                    'onPremisesExtensionAttributes',
+                ],
+                expand=['manager($select=id)'],
                 top=self._settings.graph_page_size,
             )
         )
@@ -346,7 +569,16 @@ class GraphExportService:
     async def _fetch_groups(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> tuple[list[dict[str, str]], str | None]:
         request_configuration = RequestConfiguration(
             query_parameters=GroupsRequestBuilder.GroupsRequestBuilderGetQueryParameters(
-                select=['id', 'displayName', 'description', 'securityEnabled', 'mailEnabled'],
+                select=[
+                    'id',
+                    'displayName',
+                    'description',
+                    'securityEnabled',
+                    'mailEnabled',
+                    'mailNickname',
+                    'onPremisesObjectIdentifier',
+                    'onPremisesDistinguishedName',
+                ],
                 top=self._settings.graph_page_size,
             )
         )
@@ -452,6 +684,89 @@ class GraphExportService:
             for group_id, user_id in sorted(membership_pairs, key=lambda item: (item[0], item[1]))
         ]
         return rows
+
+    async def _fetch_group_owners(
+        self, client: GraphServiceClient, groups: list[dict[str, str]], progress: LiveProgress | None = None
+    ) -> dict[str, list[str]]:
+        """Returns a dict of group_id -> [owner_user_id, ...]."""
+        semaphore = asyncio.Semaphore(self._settings.membership_concurrency)
+        owners_map: dict[str, list[str]] = {}
+
+        async def collect_group_owners(group: dict[str, str]) -> None:
+            async with semaphore:
+                group_id = group['id']
+                response = await self._run_with_retry(
+                    lambda: client.groups.by_group_id(group_id).owners.get(),
+                    operation_name=f'fetch owners for {group_id}',
+                    progress=progress,
+                )
+                if response is None:
+                    return
+
+                owner_ids: list[str] = []
+
+                def collect(owner: Any) -> bool:
+                    if getattr(owner, 'odata_type', '') == '#microsoft.graph.user':
+                        uid = to_csv_value(getattr(owner, 'id', None))
+                        if uid:
+                            owner_ids.append(uid)
+                    return True
+
+                await self._iterate_collection(
+                    response,
+                    client,
+                    collect,
+                    operation_name=f'fetch owners for {group_id}',
+                    progress=progress,
+                )
+                owners_map[group_id] = sorted(set(owner_ids))
+
+        await asyncio.gather(*(collect_group_owners(group) for group in groups))
+        return owners_map
+
+    async def _fetch_nested_groups(
+        self, client: GraphServiceClient, groups: list[dict[str, str]], progress: LiveProgress | None = None
+    ) -> list[dict[str, str]]:
+        """Returns list of {parentId, childId} dicts for nested group membership."""
+        semaphore = asyncio.Semaphore(self._settings.membership_concurrency)
+        nesting_pairs: set[tuple[str, str]] = set()
+
+        async def collect_group_children(group: dict[str, str]) -> None:
+            async with semaphore:
+                group_id = group['id']
+                request_configuration = RequestConfiguration(
+                    query_parameters=MembersRequestBuilder.MembersRequestBuilderGetQueryParameters(
+                        select=['id'],
+                        top=self._settings.graph_page_size,
+                    )
+                )
+                response = await self._run_with_retry(
+                    lambda: client.groups.by_group_id(group_id).members.get(
+                        request_configuration=request_configuration,
+                    ),
+                    operation_name=f'fetch nested groups for {group_id}',
+                    progress=progress,
+                )
+                if response is None:
+                    return
+
+                def collect(member: Any) -> bool:
+                    if getattr(member, 'odata_type', '') == '#microsoft.graph.group':
+                        child_id = to_csv_value(getattr(member, 'id', None))
+                        if child_id:
+                            nesting_pairs.add((group_id, child_id))
+                    return True
+
+                await self._iterate_collection(
+                    response,
+                    client,
+                    collect,
+                    operation_name=f'fetch nested groups for {group_id}',
+                    progress=progress,
+                )
+
+        await asyncio.gather(*(collect_group_children(group) for group in groups))
+        return [{'parentId': parent_id, 'childId': child_id} for parent_id, child_id in sorted(nesting_pairs)]
 
     async def _fetch_roles(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> list[dict[str, str]]:
         request_configuration = RequestConfiguration(
@@ -630,6 +945,14 @@ class GraphExportService:
                 delay_seconds = min(delay_seconds * 2, max_delay)
 
     def _user_to_row(self, user: Any) -> dict[str, str]:
+        manager = getattr(user, 'manager', None)
+        manager_id = to_csv_value(getattr(manager, 'id', None)) if manager else ''
+        business_phones = getattr(user, 'business_phones', None) or []
+        other_mails = getattr(user, 'other_mails', None) or []
+        ext_attrs = getattr(user, 'on_premises_extension_attributes', None)
+        sap_id = ''
+        if ext_attrs:
+            sap_id = to_csv_value(getattr(ext_attrs, 'extension_attribute1', None))
         return {
             'id': to_csv_value(getattr(user, 'id', None)),
             'userPrincipalName': to_csv_value(getattr(user, 'user_principal_name', None)),
@@ -638,6 +961,26 @@ class GraphExportService:
             'jobTitle': to_csv_value(getattr(user, 'job_title', None)),
             'department': to_csv_value(getattr(user, 'department', None)),
             'accountEnabled': to_csv_value(getattr(user, 'account_enabled', None)),
+            'givenName': to_csv_value(getattr(user, 'given_name', None)),
+            'surname': to_csv_value(getattr(user, 'surname', None)),
+            'mailNickname': to_csv_value(getattr(user, 'mail_nickname', None)),
+            'employeeId': to_csv_value(getattr(user, 'employee_id', None)),
+            'employeeType': to_csv_value(getattr(user, 'employee_type', None)),
+            'companyName': to_csv_value(getattr(user, 'company_name', None)),
+            'streetAddress': to_csv_value(getattr(user, 'street_address', None)),
+            'officeLocation': to_csv_value(getattr(user, 'office_location', None)),
+            'businessPhone': to_csv_value(business_phones[0]) if business_phones else '',
+            'mobilePhone': to_csv_value(getattr(user, 'mobile_phone', None)),
+            'preferredLanguage': to_csv_value(getattr(user, 'preferred_language', None)),
+            'country': to_csv_value(getattr(user, 'country', None)),
+            'city': to_csv_value(getattr(user, 'city', None)),
+            'state': to_csv_value(getattr(user, 'state', None)),
+            'onPremisesDistinguishedName': to_csv_value(getattr(user, 'on_premises_distinguished_name', None)),
+            'onPremisesImmutableId': to_csv_value(getattr(user, 'on_premises_immutable_id', None)),
+            'userType': to_csv_value(getattr(user, 'user_type', None)),
+            'otherMails': ';'.join(to_csv_value(mail) for mail in other_mails if to_csv_value(mail)),
+            'sapId': sap_id,
+            'managerId': manager_id,
         }
 
     def _group_to_row(self, group: Any) -> dict[str, str]:
@@ -647,6 +990,9 @@ class GraphExportService:
             'description': to_csv_value(getattr(group, 'description', None)),
             'securityEnabled': to_csv_value(getattr(group, 'security_enabled', None)),
             'mailEnabled': to_csv_value(getattr(group, 'mail_enabled', None)),
+            'mailNickname': to_csv_value(getattr(group, 'mail_nickname', None)),
+            'onPremisesObjectIdentifier': to_csv_value(getattr(group, 'on_premises_object_identifier', None)),
+            'onPremisesDistinguishedName': to_csv_value(getattr(group, 'on_premises_distinguished_name', None)),
         }
 
     def _role_to_row(self, role: Any) -> dict[str, str]:
@@ -655,6 +1001,143 @@ class GraphExportService:
             'roleTemplateId': to_csv_value(getattr(role, 'role_template_id', None)),
             'displayName': to_csv_value(getattr(role, 'display_name', None)),
             'description': to_csv_value(getattr(role, 'description', None)),
+        }
+
+    def _user_to_identity_row(self, user: dict[str, str]) -> dict[str, str]:
+        return {
+            'identityId': user.get('id', ''),
+            'employeeNumber': user.get('employeeId', ''),
+            'company': user.get('companyName', ''),
+            'street': user.get('streetAddress', ''),
+            'cn': user.get('displayName', ''),
+            'AzureUserID': user.get('id', ''),
+            'AzureMailNickname': user.get('mailNickname', ''),
+            'hrEmpNumber': user.get('employeeId', ''),
+            'department': user.get('department', ''),
+            'ldapDN': user.get('onPremisesDistinguishedName', ''),
+            'email': user.get('mail', ''),
+            'employeeType': user.get('employeeType', ''),
+            'firstName': user.get('givenName', ''),
+            'fullName': user.get('displayName', ''),
+            'objectGUID': user.get('onPremisesImmutableId', ''),
+            'phoneHome': '',
+            'jobCode': user.get('jobTitle', ''),
+            'lastName': user.get('surname', ''),
+            'location': user.get('officeLocation', ''),
+            'middleName': '',
+            'phoneOffice': user.get('businessPhone', ''),
+            'phoneMobile': user.get('mobilePhone', ''),
+            'preferredLocale': user.get('preferredLanguage', ''),
+            'provisioningID': user.get('userPrincipalName', ''),
+            'secondarySupervisorId': '',
+            'primarySupervisorId': user.get('managerId', ''),
+            'affiliatedIdentity': '',
+            'employeeStatus': 'active' if user.get('accountEnabled', '').lower() == 'true' else 'inactive',
+            'country': user.get('country', ''),
+            'city': user.get('city', ''),
+            'state': user.get('state', ''),
+            'geoLocation': '',
+            'userRisk': '',
+            'workforceID': user.get('employeeId', ''),
+            'idmDN': '',
+            'idmTreeName': '',
+            'loginAttribute': user.get('userPrincipalName', ''),
+            'title': user.get('jobTitle', ''),
+        }
+
+    def _user_to_account_row(self, user: dict[str, str], privileged_ids: set[str]) -> dict[str, str]:
+        user_id = user.get('id', '')
+        is_disabled = user.get('accountEnabled', '').lower() != 'true'
+        return {
+            'accountId': user_id,
+            'displayName': user.get('displayName', ''),
+            'description': '',
+            'type': user.get('userType', 'Member') or 'Member',
+            'risk': '',
+            'cost': '',
+            'SAP_ID': user.get('sapId', ''),
+            'aliases': user.get('otherMails', ''),
+            'connectedAccountProvisioningID': '',
+            'disabled': 'true' if is_disabled else 'false',
+            'privileged': 'true' if user_id in privileged_ids else 'false',
+            'state': 'disabled' if is_disabled else 'active',
+            'accountProvisioningID': user.get('userPrincipalName', ''),
+            'accountUserMapping': user_id,
+            'accountCustodianMapping': user.get('managerId', ''),
+            'idmAccountID': '',
+            'provisioningDriverID': '',
+            'provisioningDriverLogicalID': '',
+        }
+
+    def _group_to_ig_row(
+        self,
+        group: dict[str, str],
+        owners_map: dict[str, list[str]],
+        members_by_group: dict[str, list[str]],
+    ) -> dict[str, str]:
+        group_id = group.get('id', '')
+        owner_ids = ';'.join(owners_map.get(group_id, []))
+        member_ids = ';'.join(members_by_group.get(group_id, []))
+        description = group.get('description', '')
+        return {
+            'groupId': group_id,
+            'groupOwners': owner_ids,
+            'objectGUID': group.get('onPremisesObjectIdentifier', ''),
+            'groupMembers': member_ids,
+            'name': group.get('displayName', ''),
+            'longDescription': description,
+            'ldapDN': group.get('onPremisesDistinguishedName', ''),
+            'alternateName': group.get('mailNickname', ''),
+            'shortDescription': description[:255] if description else '',
+        }
+
+    def _role_to_ig_permission_row(self, role: dict[str, str], holder_count: int) -> dict[str, str]:
+        return {
+            'permissionId': role.get('id', ''),
+            'displayName': role.get('displayName', ''),
+            'description': role.get('description', ''),
+            'type': 'DirectoryRole',
+            'assignable': 'true',
+            'owner': '',
+            'risk': '',
+            'cost': '',
+            'holder': str(holder_count),
+            'childPermissionId': '',
+            'parentPermissionId': '',
+            'hiddenFromCatalog': 'false',
+            'provisioningTargetAttribute': 'roleTemplateId',
+            'provisionedByThisPermission': 'false',
+            'nativeValueForProvisioning': role.get('roleTemplateId', ''),
+            'uniqueApplicationID': '',
+            'staticPermissionFlag': 'false',
+            'provisioningDriverID': '',
+            'provisioningApplicationLogicalID': '',
+        }
+
+    def _role_membership_to_holder_row(self, rm: dict[str, str]) -> dict[str, str]:
+        assignment_id = f"{rm['user_id']}_{rm['role_id']}"
+        return {
+            'assignmentId': assignment_id,
+            'accountId': rm['user_id'],
+            'permissionId': rm['role_id'],
+            'usage': '',
+            'risk': '',
+            'revocable': 'true',
+            'assignmentType': 'DIRECT',
+            'assignmentValue': '',
+        }
+
+    def _role_membership_to_permission_row(self, rm: dict[str, str]) -> dict[str, str]:
+        assignment_id = f"{rm['user_id']}_{rm['role_id']}"
+        return {
+            'permissionId': rm['role_id'],
+            'accountId': rm['user_id'],
+            'assignmentId': assignment_id,
+            'assignmentType': 'DIRECT',
+            'assignmentRisk': '',
+            'usage': '',
+            'revocable': 'true',
+            'assignmentValue': '',
         }
 
     def _read_csv(self, file_path: Path, key_column: str) -> dict[str, dict[str, str]]:
@@ -677,6 +1160,8 @@ class GraphExportService:
         memberships: list[dict[str, str]],
         roles: list[dict[str, str]],
         role_memberships: list[dict[str, str]],
+        group_owners: dict[str, list[str]],
+        nested_groups: list[dict[str, str]],
     ) -> ExportResult:
         run_directory = self._settings.export_base_dir / run_id
         latest_directory = self._settings.export_base_dir / 'latest'
@@ -690,12 +1175,86 @@ class GraphExportService:
         role_memberships_file = self._write_csv(
             run_directory / 'role_memberships.csv', ROLE_MEMBERSHIP_COLUMNS, role_memberships
         )
+        members_by_group: dict[str, list[str]] = {}
+        for membership in memberships:
+            group_id = membership.get('group_id', '')
+            user_id = membership.get('user_id', '')
+            if group_id and user_id:
+                members_by_group.setdefault(group_id, []).append(user_id)
+        for member_ids in members_by_group.values():
+            member_ids.sort()
+
+        privileged_ids = {rm.get('user_id', '') for rm in role_memberships if rm.get('user_id', '')}
+        holder_counts: dict[str, int] = {}
+        for rm in role_memberships:
+            role_id = rm.get('role_id', '')
+            if role_id:
+                holder_counts[role_id] = holder_counts.get(role_id, 0) + 1
+
+        identity_rows = [self._user_to_identity_row(user) for user in users]
+        account_rows = [self._user_to_account_row(user, privileged_ids) for user in users]
+        group_rows = [self._group_to_ig_row(group, group_owners, members_by_group) for group in groups]
+        group_membership_rows = [{'groupId': m['group_id'], 'members': m['user_id']} for m in memberships]
+        permission_rows = [
+            self._role_to_ig_permission_row(role, holder_counts.get(role.get('id', ''), 0)) for role in roles
+        ]
+        holder_to_permission_rows = [self._role_membership_to_holder_row(rm) for rm in role_memberships]
+        permission_to_holder_rows = [self._role_membership_to_permission_row(rm) for rm in role_memberships]
+
+        identity_file = self._write_csv(run_directory / 'Identity.csv', IDENTITY_COLUMNS, identity_rows)
+        account_file = self._write_csv(run_directory / 'ig_account_import.csv', IG_ACCOUNT_COLUMNS, account_rows)
+        group_file = self._write_csv(run_directory / 'ig_group_import.csv', IG_GROUP_COLUMNS, group_rows)
+        group_membership_file = self._write_csv(
+            run_directory / 'ig_group_to_user_membership.csv', IG_GROUP_MEMBERSHIP_COLUMNS, group_membership_rows
+        )
+        parent_child_group_file = self._write_csv(
+            run_directory / 'ig_parent_group_to_child_group.csv', IG_PARENT_CHILD_GROUP_COLUMNS, nested_groups
+        )
+        permission_file = self._write_csv(
+            run_directory / 'ig_permission_import.csv', IG_PERMISSION_COLUMNS, permission_rows
+        )
+        holder_to_permission_file = self._write_csv(
+            run_directory / 'ig_holder_to_permissions_mapping.csv',
+            IG_HOLDER_TO_PERMISSION_COLUMNS,
+            holder_to_permission_rows,
+        )
+        permission_to_holder_file = self._write_csv(
+            run_directory / 'ig_permission_to_holders_mapping.csv',
+            IG_PERMISSION_TO_HOLDER_COLUMNS,
+            permission_to_holder_rows,
+        )
+        permission_hierarchy_cp_file = self._write_csv(
+            run_directory / 'ig_permission_hierarchy_child_parent.csv',
+            IG_PERMISSION_HIERARCHY_COLUMNS,
+            [],
+        )
+        permission_hierarchy_pc_file = self._write_csv(
+            run_directory / 'ig_permission_hierarchy_parent_child.csv',
+            IG_PERMISSION_HIERARCHY_PC_COLUMNS,
+            [],
+        )
 
         shutil.copyfile(users_file, latest_directory / 'users.csv')
         shutil.copyfile(groups_file, latest_directory / 'groups.csv')
         shutil.copyfile(memberships_file, latest_directory / 'memberships.csv')
         shutil.copyfile(roles_file, latest_directory / 'roles.csv')
         shutil.copyfile(role_memberships_file, latest_directory / 'role_memberships.csv')
+        shutil.copyfile(identity_file, latest_directory / 'Identity.csv')
+        shutil.copyfile(account_file, latest_directory / 'ig_account_import.csv')
+        shutil.copyfile(group_file, latest_directory / 'ig_group_import.csv')
+        shutil.copyfile(group_membership_file, latest_directory / 'ig_group_to_user_membership.csv')
+        shutil.copyfile(parent_child_group_file, latest_directory / 'ig_parent_group_to_child_group.csv')
+        shutil.copyfile(permission_file, latest_directory / 'ig_permission_import.csv')
+        shutil.copyfile(holder_to_permission_file, latest_directory / 'ig_holder_to_permissions_mapping.csv')
+        shutil.copyfile(permission_to_holder_file, latest_directory / 'ig_permission_to_holders_mapping.csv')
+        shutil.copyfile(
+            permission_hierarchy_cp_file,
+            latest_directory / 'ig_permission_hierarchy_child_parent.csv',
+        )
+        shutil.copyfile(
+            permission_hierarchy_pc_file,
+            latest_directory / 'ig_permission_hierarchy_parent_child.csv',
+        )
 
         return ExportResult(
             users_count=len(users),
@@ -703,6 +1262,17 @@ class GraphExportService:
             memberships_count=len(memberships),
             roles_count=len(roles),
             role_memberships_count=len(role_memberships),
+            nested_groups_count=len(nested_groups),
+            identity_file=str(identity_file),
+            account_file=str(account_file),
+            group_file=str(group_file),
+            group_membership_file=str(group_membership_file),
+            parent_child_group_file=str(parent_child_group_file),
+            permission_file=str(permission_file),
+            holder_to_permission_file=str(holder_to_permission_file),
+            permission_to_holder_file=str(permission_to_holder_file),
+            permission_hierarchy_cp_file=str(permission_hierarchy_cp_file),
+            permission_hierarchy_pc_file=str(permission_hierarchy_pc_file),
             users_file=str(users_file),
             groups_file=str(groups_file),
             memberships_file=str(memberships_file),
