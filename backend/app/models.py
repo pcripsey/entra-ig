@@ -121,3 +121,11 @@ class RetryConfigResponse(BaseModel):
 class RetryConfigUpdateRequest(BaseModel):
     max_retry_attempts: int = Field(ge=1, le=20)
     max_retry_delay_seconds: int = Field(ge=1, le=300)
+
+
+class LogLevelResponse(BaseModel):
+    log_level: str
+
+
+class LogLevelUpdateRequest(BaseModel):
+    log_level: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']

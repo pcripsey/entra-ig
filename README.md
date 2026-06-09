@@ -479,6 +479,9 @@ All endpoints are served under `/api`.
 | `GET` | `/api/runs/{run_id}` | Get a specific sync run |
 | `DELETE` | `/api/runs/{run_id}` | Delete a completed run and its export files |
 | `GET` | `/api/logs` | Tail the application log (`?lines=N`, default 100) |
+| `DELETE` | `/api/logs` | Truncate the active log file and remove rotated backups |
+| `GET` | `/api/log-level` | Read the current in-process application log level |
+| `PUT` | `/api/log-level` | Update the current in-process application log level |
 | `GET` | `/api/schedule` | Get the automatic refresh schedule |
 | `PUT` | `/api/schedule` | Update the schedule (`enabled`, `interval_minutes`, `sync_type`) |
 | `GET` | `/api/retry-config` | Get Graph retry settings |
@@ -504,7 +507,7 @@ Copy `.env.example` to `.env` and set:
 | `DATABASE_PATH` | `data/app.db` | SQLite database file path |
 | `LOG_FILE_PATH` | `logs/app.log` | Application log file path |
 | `FRONTEND_DIST` | `frontend/dist` | Path to compiled React assets served by FastAPI |
-| `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) |
 
 ## Project structure
 

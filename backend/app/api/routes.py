@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import re
 import shutil
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -14,6 +16,8 @@ from app.models import (
     ConnectionTestResponse,
     HealthResponse,
     LiveProgressResponse,
+    LogLevelResponse,
+    LogLevelUpdateRequest,
     LogResponse,
     RetryConfigResponse,
     RetryConfigUpdateRequest,
@@ -160,6 +164,50 @@ async def get_logs(request: Request, lines: int = 100) -> LogResponse:
 
     content = log_file_path.read_text(encoding='utf-8').splitlines()
     return LogResponse(lines=content[-lines:])
+
+
+@router.delete('/logs', status_code=204)
+async def clear_logs(request: Request) -> None:
+    """Truncate the active log file and remove any rotated backup files."""
+    logger = request.app.state.logger
+    active_log_path = Path(request.app.state.settings.log_file_path).resolve()
+    backup_count = 0
+
+    for handler in logger.handlers:
+        if isinstance(handler, RotatingFileHandler):
+            if Path(handler.baseFilename).resolve() != active_log_path:
+                continue
+            backup_count = max(backup_count, handler.backupCount)
+            handler.acquire()
+            try:
+                handler.flush()
+                handler.stream.seek(0)
+                handler.stream.truncate()
+            finally:
+                handler.release()
+
+    for i in range(1, backup_count + 1):
+        backup = Path(f'{active_log_path}.{i}')
+        if backup.exists():
+            try:
+                backup.unlink()
+            except OSError:
+                logger.warning('Could not remove log backup %s', backup, exc_info=True)
+
+
+@router.get('/log-level', response_model=LogLevelResponse)
+async def get_log_level(request: Request) -> LogLevelResponse:
+    logger = request.app.state.logger
+    return LogLevelResponse(log_level=logging.getLevelName(logger.level))
+
+
+@router.put('/log-level', response_model=LogLevelResponse)
+async def update_log_level(request: Request, payload: LogLevelUpdateRequest) -> LogLevelResponse:
+    logger = request.app.state.logger
+    logger.setLevel(payload.log_level)
+    for handler in logger.handlers:
+        handler.setLevel(payload.log_level)
+    return LogLevelResponse(log_level=payload.log_level)
 
 
 @router.get('/schedule', response_model=ScheduleResponse)
