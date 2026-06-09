@@ -65,74 +65,74 @@ VITE_API_BASE_URL=http://localhost:8000/api npm run dev
 ### Component overview
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                        Admin console (React)                   │
-│  ┌──────────────┐  ┌──────────────────────┐  ┌──────────────┐ │
-│  │  Run export  │  │   Refresh schedule   │  │   Run log /  │ │
-│  │  [Full|Incr] │  │ [Full|Incr] interval │  │   history    │ │
-│  └──────┬───────┘  └──────────┬───────────┘  └──────────────┘ │
-└─────────┼────────────────────┼────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        Admin console (React)                    │
+│  ┌──────────────┐  ┌──────────────────────┐  ┌──────────────┐  │
+│  │  Run export  │  │   Refresh schedule   │  │   Run log /  │  │
+│  │  [Full|Incr] │  │ [Full|Incr] interval │  │   history    │  │
+│  └──────┬───────┘  └──────────┬───────────┘  └──────────────┘  │
+└─────────┼────────────────────┼─────────────────────────────────┘
           │  POST /api/sync     │  PUT /api/schedule
           ▼                     ▼
-┌────────────────────────────────────────────────────────────────┐
-│                    FastAPI  (routes.py)                        │
-└─────────────────────────────┬──────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    FastAPI  (routes.py)                         │
+└─────────────────────────────┬───────────────────────────────────┘
                               │
                               ▼
-┌────────────────────────────────────────────────────────────────┐
-│                    SyncService                                 │
-│  ┌────────────────────────┐   ┌──────────────────────────────┐ │
-│  │   start(sync_type)     │   │      _scheduler_loop         │ │
-│  │   creates DB run row   │   │  fires on interval, passes   │ │
-│  │   spawns async task    │   │  schedule_sync_type to start()│ │
-│  └──────────┬─────────────┘   └──────────────────────────────┘ │
+┌─────────────────────────────────────────────────────────────────┐
+│                    SyncService                                  │
+│  ┌────────────────────────┐   ┌──────────────────────────────┐  │
+│  │   start(sync_type)     │   │      _scheduler_loop         │  │
+│  │   creates DB run row   │   │  fires on interval, passes   │  │
+│  │   spawns async task    │   │  schedule_sync_type to start()│  │
+│  └──────────┬─────────────┘   └──────────────────────────────┘  │
 └─────────────┼───────────────────────────────────────────────────┘
               │  export(run_id, sync_type, run_store)
               ▼
-┌────────────────────────────────────────────────────────────────┐
-│                  GraphExportService                            │
-│                                                                │
-│   sync_type == "full"            sync_type == "incremental"    │
-│   ┌──────────────────────┐       ┌───────────────────────────┐ │
-│   │ GET /users           │       │ no stored delta tokens?   │ │
-│   │ GET /groups          │       │  └─► fall back to full    │ │
-│   │ GET /groups/*/members│       │ GET /users/delta?token    │ │
-│   │ write CSVs           │       │ GET /groups/delta?token   │ │
-│   │ store delta tokens   │       │ load latest/ CSVs         │ │
-│   └──────────────────────┘       │ merge adds/updates/deletes│ │
-│                                  │ GET /groups/*/members(all)│ │
-│                                  │ write CSVs                │ │
-│                                  │ store new delta tokens    │ │
-│                                  └───────────────────────────┘ │
-└────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                  GraphExportService                             │
+│                                                                 │
+│   sync_type == "full"            sync_type == "incremental"     │
+│   ┌──────────────────────┐       ┌───────────────────────────┐  │
+│   │ GET /users           │       │ no stored delta tokens?   │  │
+│   │ GET /groups          │       │  └─► fall back to full    │  │
+│   │ GET /groups/*/members│       │ GET /users/delta?token    │  │
+│   │ write CSVs           │       │ GET /groups/delta?token   │  │
+│   │ store delta tokens   │       │ load latest/ CSVs         │  │
+│   └──────────────────────┘       │ merge adds/updates/deletes│  │
+│                                  │ GET /groups/*/members(all)│  │
+│                                  │ write CSVs                │  │
+│                                  │ store new delta tokens    │  │
+│                                  └───────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
               │
               ▼
-┌────────────────────────────────────────────────────────────────┐
-│              SQLite  (RunStore / database.py)                  │
-│  sync_runs     schedule_config     delta_tokens                │
-│  id            enabled             resource (users|groups)     │
-│  status        interval_minutes    token  (delta link URL)     │
-│  sync_type     sync_type           updated_at                  │
-│  started_at    updated_at                                      │
-│  completed_at                                                  │
-│  users_count                                                   │
-│  …                                                             │
-└────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│              SQLite  (RunStore / database.py)                   │
+│  sync_runs     schedule_config     delta_tokens                 │
+│  id            enabled             resource (users|groups)      │
+│  status        interval_minutes    token  (delta link URL)      │
+│  sync_type     sync_type           updated_at                   │
+│  started_at    updated_at                                       │
+│  completed_at                                                   │
+│  users_count                                                    │
+│  …                                                              │
+└─────────────────────────────────────────────────────────────────┘
               │
               ▼
-┌────────────────────────────────────────────────────────────────┐
-│               File system  (data/exports/)                     │
-│  <run_id>/users.csv                                            │
-│  <run_id>/groups.csv                                           │
-│  <run_id>/memberships.csv                                      │
-│  <run_id>/roles.csv                                            │
-│  <run_id>/role_memberships.csv                                 │
-│  latest/users.csv      ◄── always reflects most recent run    │
-│  latest/groups.csv                                             │
-│  latest/memberships.csv                                        │
-│  latest/roles.csv                                              │
-│  latest/role_memberships.csv                                   │
-└────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│               File system  (data/exports/)                      │
+│  <run_id>/users.csv                                             │
+│  <run_id>/groups.csv                                            │
+│  <run_id>/memberships.csv                                       │
+│  <run_id>/roles.csv                                             │
+│  <run_id>/role_memberships.csv                                  │
+│  latest/users.csv      ◄── always reflects most recent run     │
+│  latest/groups.csv                                              │
+│  latest/memberships.csv                                         │
+│  latest/roles.csv                                               │
+│  latest/role_memberships.csv                                    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Sync type decision flow
@@ -179,24 +179,137 @@ User/scheduler triggers sync
 | Delta token expired (HTTP 410) | Automatic fall-back to full sync; new tokens stored |
 | Incremental with missing `latest/` | Automatic fall-back to full sync |
 
+## Entra ID attributes
+
+The following Microsoft Graph attributes are requested on each sync. Null values are replaced with empty strings in all CSV output.
+
+### Users (`/users` — `$select` + `$expand=manager($select=id)`)
+
+| Attribute | Description |
+|---|---|
+| `id` | Object ID (GUID) |
+| `userPrincipalName` | UPN / primary login name |
+| `displayName` | Full display name |
+| `mail` | Primary SMTP address |
+| `jobTitle` | Job title |
+| `department` | Department |
+| `accountEnabled` | Account enabled state (`true` / `false`) |
+| `givenName` | First name |
+| `surname` | Last name |
+| `mailNickname` | Exchange alias |
+| `employeeId` | Employee ID |
+| `employeeType` | Employee type classification |
+| `companyName` | Company name |
+| `streetAddress` | Street address |
+| `officeLocation` | Office / building location |
+| `businessPhones` | List of business phone numbers; first entry is used |
+| `mobilePhone` | Mobile phone number |
+| `preferredLanguage` | Preferred language / locale |
+| `country` | Country |
+| `city` | City |
+| `state` | State / province |
+| `onPremisesDistinguishedName` | On-premises Active Directory distinguished name |
+| `onPremisesImmutableId` | On-premises immutable ID (objectGUID base64) |
+| `userType` | `Member` or `Guest` |
+| `otherMails` | Secondary SMTP addresses (`;`-joined in CSV) |
+| `onPremisesExtensionAttributes` | Extension attributes object; `extensionAttribute1` is read as `sapId` |
+| `manager.id` | Manager's object ID (via `$expand=manager($select=id)`) |
+
+### Groups (`/groups` — `$select`)
+
+| Attribute | Description |
+|---|---|
+| `id` | Object ID (GUID) |
+| `displayName` | Group display name |
+| `description` | Group description |
+| `securityEnabled` | Security group flag (`true` / `false`) |
+| `mailEnabled` | Mail-enabled flag (`true` / `false`) |
+| `mailNickname` | Exchange alias |
+| `onPremisesObjectIdentifier` | On-premises AD objectGUID |
+| `onPremisesDistinguishedName` | On-premises Active Directory distinguished name |
+
+### Group members and owners (`/groups/{id}/members`, `/groups/{id}/owners`)
+
+Only `id` is selected from each member / owner object. Only `#microsoft.graph.user` objects contribute to user membership and owner lists. `#microsoft.graph.group` objects are captured separately to populate the nested-group parent-child relationship file.
+
+### Directory Roles (`/directoryRoles` — `$select`)
+
+| Attribute | Description |
+|---|---|
+| `id` | Activated role object ID |
+| `roleTemplateId` | Role template ID |
+| `displayName` | Role display name |
+| `description` | Role description |
+
+### Role members (`/directoryRoles/{id}/members`)
+
+Only `id` is selected. Only `#microsoft.graph.user` objects are retained.
+
 ## CSV output
 
 Each sync writes timestamped collector files under `data/exports/<run_id>/` and also refreshes `data/exports/latest/`.
 
 ### users.csv
 
+Raw Entra user attributes — one row per user.
+
 Columns:
-`id,userPrincipalName,displayName,mail,jobTitle,department,accountEnabled`
+`id,userPrincipalName,displayName,mail,jobTitle,department,accountEnabled,givenName,surname,mailNickname,employeeId,employeeType,companyName,streetAddress,officeLocation,businessPhone,mobilePhone,preferredLanguage,country,city,state,onPremisesDistinguishedName,onPremisesImmutableId,userType,otherMails,sapId,managerId`
+
+| Column | Entra ID source |
+|---|---|
+| `id` | `id` |
+| `userPrincipalName` | `userPrincipalName` |
+| `displayName` | `displayName` |
+| `mail` | `mail` |
+| `jobTitle` | `jobTitle` |
+| `department` | `department` |
+| `accountEnabled` | `accountEnabled` |
+| `givenName` | `givenName` |
+| `surname` | `surname` |
+| `mailNickname` | `mailNickname` |
+| `employeeId` | `employeeId` |
+| `employeeType` | `employeeType` |
+| `companyName` | `companyName` |
+| `streetAddress` | `streetAddress` |
+| `officeLocation` | `officeLocation` |
+| `businessPhone` | `businessPhones[0]` (first entry) |
+| `mobilePhone` | `mobilePhone` |
+| `preferredLanguage` | `preferredLanguage` |
+| `country` | `country` |
+| `city` | `city` |
+| `state` | `state` |
+| `onPremisesDistinguishedName` | `onPremisesDistinguishedName` |
+| `onPremisesImmutableId` | `onPremisesImmutableId` |
+| `userType` | `userType` |
+| `otherMails` | `otherMails` (`;`-joined) |
+| `sapId` | `onPremisesExtensionAttributes.extensionAttribute1` |
+| `managerId` | `manager.id` (expanded) |
 
 ### groups.csv
 
+Raw Entra group attributes — one row per group.
+
 Columns:
-`id,displayName,description,securityEnabled,mailEnabled`
+`id,displayName,description,securityEnabled,mailEnabled,mailNickname,onPremisesObjectIdentifier,onPremisesDistinguishedName`
+
+| Column | Entra ID source |
+|---|---|
+| `id` | `id` |
+| `displayName` | `displayName` |
+| `description` | `description` |
+| `securityEnabled` | `securityEnabled` |
+| `mailEnabled` | `mailEnabled` |
+| `mailNickname` | `mailNickname` |
+| `onPremisesObjectIdentifier` | `onPremisesObjectIdentifier` |
+| `onPremisesDistinguishedName` | `onPremisesDistinguishedName` |
 
 ### memberships.csv
 
 Columns:
 `group_id,user_id`
+
+One row per user–group membership. Only `#microsoft.graph.user` members are included; service principals and devices are excluded.
 
 ### roles.csv
 
@@ -212,6 +325,144 @@ Columns:
 
 > [!NOTE]
 > The app registration used with `GRAPH_SCOPE=https://graph.microsoft.com/.default` must include `RoleManagement.Read.Directory` in addition to `User.Read.All` and `Group.Read.All`.
+
+### IG collection files
+
+The following OpenText Identity Governance collection CSV files are derived from the raw Entra data on every sync run.
+
+#### Identity.csv
+
+| Column | Entra ID source |
+|---|---|
+| `identityId` | `id` |
+| `employeeNumber` | `employeeId` |
+| `company` | `companyName` |
+| `street` | `streetAddress` |
+| `cn` | `displayName` |
+| `AzureUserID` | `id` |
+| `AzureMailNickname` | `mailNickname` |
+| `hrEmpNumber` | `employeeId` |
+| `department` | `department` |
+| `ldapDN` | `onPremisesDistinguishedName` |
+| `email` | `mail` |
+| `employeeType` | `employeeType` |
+| `firstName` | `givenName` |
+| `fullName` | `displayName` |
+| `objectGUID` | `onPremisesImmutableId` |
+| `phoneHome` | *(empty)* |
+| `jobCode` | `jobTitle` |
+| `lastName` | `surname` |
+| `location` | `officeLocation` |
+| `middleName` | *(empty)* |
+| `phoneOffice` | `businessPhones[0]` |
+| `phoneMobile` | `mobilePhone` |
+| `preferredLocale` | `preferredLanguage` |
+| `provisioningID` | `userPrincipalName` |
+| `secondarySupervisorId` | *(empty)* |
+| `primarySupervisorId` | `manager.id` |
+| `affiliatedIdentity` | *(empty)* |
+| `employeeStatus` | `accountEnabled` → `active` / `inactive` |
+| `country` | `country` |
+| `city` | `city` |
+| `state` | `state` |
+| `geoLocation` | *(empty)* |
+| `userRisk` | *(empty)* |
+| `workforceID` | `employeeId` |
+| `idmDN` | *(empty)* |
+| `idmTreeName` | *(empty)* |
+| `loginAttribute` | `userPrincipalName` |
+| `title` | `jobTitle` |
+
+#### ig_account_import.csv
+
+| Column | Entra ID source |
+|---|---|
+| `accountId` | `id` |
+| `displayName` | `displayName` |
+| `description` | *(empty)* |
+| `type` | `userType` (default: `Member`) |
+| `risk` | *(empty)* |
+| `cost` | *(empty)* |
+| `SAP_ID` | `onPremisesExtensionAttributes.extensionAttribute1` |
+| `aliases` | `otherMails` (`;`-joined) |
+| `connectedAccountProvisioningID` | *(empty)* |
+| `disabled` | `accountEnabled` inverted → `true` / `false` |
+| `privileged` | derived: `true` if user holds any directory role |
+| `state` | `accountEnabled` → `active` / `disabled` |
+| `accountProvisioningID` | `userPrincipalName` |
+| `accountUserMapping` | `id` |
+| `accountCustodianMapping` | `manager.id` |
+| `idmAccountID` | *(empty)* |
+| `provisioningDriverID` | *(empty)* |
+| `provisioningDriverLogicalID` | *(empty)* |
+
+#### ig_group_import.csv
+
+| Column | Entra ID source |
+|---|---|
+| `groupId` | group `id` |
+| `groupOwners` | `/groups/{id}/owners` — user IDs (`;`-joined) |
+| `objectGUID` | `onPremisesObjectIdentifier` |
+| `groupMembers` | `/groups/{id}/members` — user IDs (`;`-joined) |
+| `name` | `displayName` |
+| `longDescription` | `description` |
+| `ldapDN` | `onPremisesDistinguishedName` |
+| `alternateName` | `mailNickname` |
+| `shortDescription` | `description` (truncated to 255 chars) |
+
+#### ig_group_to_user_membership.csv
+
+Columns: `groupId,members`
+
+One row per user–group membership pairing (flat join of group ID → user ID).
+
+#### ig_parent_group_to_child_group.csv
+
+Columns: `parentId,childId`
+
+One row per nested group relationship detected in `/groups/{id}/members`.
+
+#### ig_permission_import.csv
+
+| Column | Entra ID source |
+|---|---|
+| `permissionId` | role `id` |
+| `displayName` | role `displayName` |
+| `description` | role `description` |
+| `type` | `DirectoryRole` (hardcoded) |
+| `assignable` | `true` (hardcoded) |
+| `owner` | *(empty)* |
+| `risk` | *(empty)* |
+| `cost` | *(empty)* |
+| `holder` | count of role members |
+| `childPermissionId` | *(empty)* |
+| `parentPermissionId` | *(empty)* |
+| `hiddenFromCatalog` | `false` (hardcoded) |
+| `provisioningTargetAttribute` | `roleTemplateId` (hardcoded) |
+| `provisionedByThisPermission` | `false` (hardcoded) |
+| `nativeValueForProvisioning` | role `roleTemplateId` |
+| `uniqueApplicationID` | *(empty)* |
+| `staticPermissionFlag` | `false` (hardcoded) |
+| `provisioningDriverID` | *(empty)* |
+| `provisioningApplicationLogicalID` | *(empty)* |
+
+#### ig_holder_to_permissions_mapping.csv
+
+Columns: `assignmentId,accountId,permissionId,usage,risk,revocable,assignmentType,assignmentValue`
+
+One row per role membership. `assignmentId` = `{user_id}_{role_id}`, `assignmentType` = `DIRECT`.
+
+#### ig_permission_to_holders_mapping.csv
+
+Columns: `permissionId,accountId,assignmentId,assignmentType,assignmentRisk,usage,revocable,assignmentValue`
+
+Inverse view of `ig_holder_to_permissions_mapping.csv`.
+
+#### ig_permission_hierarchy_child_parent.csv / ig_permission_hierarchy_parent_child.csv
+
+Columns: `permissionId,parentPermissionId,assignmentType` / `permissionId,childPermissionId,assignmentType`
+
+Reserved for permission hierarchies; always written empty (no role hierarchy modelled in Entra).
 
 ## API reference
 
