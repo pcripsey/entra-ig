@@ -66,6 +66,10 @@ type LogResponse = {
   lines: string[]
 }
 
+type LogLevelResponse = {
+  log_level: string
+}
+
 type ScheduleResponse = {
   enabled: boolean
   interval_minutes: number
@@ -126,6 +130,7 @@ function App() {
   const [status, setStatus] = useState<SyncStatusResponse | null>(null)
   const [runs, setRuns] = useState<SyncRunResponse[]>([])
   const [logs, setLogs] = useState<string[]>([])
+  const [logLevel, setLogLevel] = useState<string>('INFO')
   const [schedule, setSchedule] = useState<ScheduleResponse | null>(null)
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
   const [scheduleIntervalMinutes, setScheduleIntervalMinutes] = useState('60')
@@ -134,6 +139,7 @@ function App() {
   const [retryAttempts, setRetryAttempts] = useState('5')
   const [retryDelaySeconds, setRetryDelaySeconds] = useState('32')
   const [savingRetryConfig, setSavingRetryConfig] = useState(false)
+  const [savingLogLevel, setSavingLogLevel] = useState(false)
   const [syncType, setSyncType] = useState<SyncType>('full')
   const [tenantId, setTenantId] = useState('')
   const [clientId, setClientId] = useState('')
@@ -144,17 +150,19 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [savingSchedule, setSavingSchedule] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
+  const [clearingLogs, setClearingLogs] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const loadDashboard = async () => {
     try {
       setError(null)
-      const [configData, healthData, statusData, runData, logData, scheduleData, retryConfigData] = await Promise.all([
+      const [configData, healthData, statusData, runData, logData, logLevelData, scheduleData, retryConfigData] = await Promise.all([
         fetchJsonRequired<ConfigResponse>('/config'),
         fetchJsonRequired<HealthResponse>('/health'),
         fetchJsonRequired<SyncStatusResponse>('/status'),
         fetchJsonRequired<SyncRunResponse[]>('/runs'),
         fetchJsonRequired<LogResponse>('/logs?lines=200'),
+        fetchJsonRequired<LogLevelResponse>('/log-level'),
         fetchJsonRequired<ScheduleResponse>('/schedule'),
         fetchJsonRequired<RetryConfigResponse>('/retry-config'),
       ])
@@ -166,6 +174,7 @@ function App() {
       setStatus(statusData)
       setRuns(runData)
       setLogs(logData.lines)
+      setLogLevel(logLevelData.log_level)
       setSchedule(scheduleData)
       setScheduleEnabled(scheduleData.enabled)
       setScheduleIntervalMinutes(String(scheduleData.interval_minutes))
@@ -274,6 +283,35 @@ function App() {
       setError(retryError instanceof Error ? retryError.message : 'Unable to save retry configuration.')
     } finally {
       setSavingRetryConfig(false)
+    }
+  }
+
+  const clearLogs = async () => {
+    try {
+      setClearingLogs(true)
+      setError(null)
+      await fetchJson('/logs', { method: 'DELETE' })
+      setLogs([])
+    } catch (clearError) {
+      setError(clearError instanceof Error ? clearError.message : 'Unable to clear logs.')
+    } finally {
+      setClearingLogs(false)
+    }
+  }
+
+  const saveLogLevel = async () => {
+    try {
+      setSavingLogLevel(true)
+      setError(null)
+      const data = await fetchJsonRequired<LogLevelResponse>('/log-level', {
+        method: 'PUT',
+        body: JSON.stringify({ log_level: logLevel }),
+      })
+      setLogLevel(data.log_level)
+    } catch (logLevelError) {
+      setError(logLevelError instanceof Error ? logLevelError.message : 'Unable to save log level.')
+    } finally {
+      setSavingLogLevel(false)
     }
   }
 
@@ -627,6 +665,26 @@ function App() {
           <div className="panel-header">
             <h2>Application log tail</h2>
             <span className="pill neutral">Observability</span>
+          </div>
+          <div className="schedule-form">
+            <label>
+              <span>Log level</span>
+              <select value={logLevel} onChange={(event) => setLogLevel(event.target.value)}>
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO">INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="ERROR">ERROR</option>
+                <option value="CRITICAL">CRITICAL</option>
+              </select>
+            </label>
+            <div className="actions-row">
+              <button className="secondary-action" onClick={() => void saveLogLevel()} disabled={savingLogLevel}>
+                {savingLogLevel ? 'Saving…' : 'Save log level'}
+              </button>
+              <button className="secondary-action" onClick={() => void clearLogs()} disabled={clearingLogs}>
+                {clearingLogs ? 'Clearing…' : 'Clear logs'}
+              </button>
+            </div>
           </div>
           <pre className="log-viewer">{logs.length > 0 ? logs.join('\n') : 'No log entries yet.'}</pre>
         </article>
