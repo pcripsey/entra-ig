@@ -170,10 +170,14 @@ async def get_logs(request: Request, lines: int = 100) -> LogResponse:
 async def clear_logs(request: Request) -> None:
     """Truncate the active log file and remove any rotated backup files."""
     logger = request.app.state.logger
-    log_file_path = Path(request.app.state.settings.log_file_path)
+    active_log_path = Path(request.app.state.settings.log_file_path).resolve()
+    backup_count = 0
 
     for handler in logger.handlers:
         if isinstance(handler, RotatingFileHandler):
+            if Path(handler.baseFilename).resolve() != active_log_path:
+                continue
+            backup_count = max(backup_count, handler.backupCount)
             handler.acquire()
             try:
                 handler.flush()
@@ -182,8 +186,8 @@ async def clear_logs(request: Request) -> None:
             finally:
                 handler.release()
 
-    for i in range(1, 6):
-        backup = Path(f'{log_file_path}.{i}')
+    for i in range(1, backup_count + 1):
+        backup = Path(f'{active_log_path}.{i}')
         if backup.exists():
             try:
                 backup.unlink()

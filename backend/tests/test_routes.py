@@ -11,7 +11,7 @@ from app.api.routes import router
 from app.config import Settings
 
 
-def create_test_client(log_file_path: Path) -> tuple[TestClient, logging.Logger]:
+def create_test_client(log_file_path: Path, *, backup_count: int = 5) -> tuple[TestClient, logging.Logger]:
     app = FastAPI()
     app.include_router(router)
 
@@ -20,7 +20,7 @@ def create_test_client(log_file_path: Path) -> tuple[TestClient, logging.Logger]
     logger.setLevel(logging.INFO)
     logger.propagate = False
 
-    file_handler = RotatingFileHandler(log_file_path, maxBytes=1024, backupCount=5)
+    file_handler = RotatingFileHandler(log_file_path, maxBytes=1024, backupCount=backup_count)
     file_handler.setLevel(logging.INFO)
     logger.addHandler(file_handler)
 
@@ -36,22 +36,23 @@ def create_test_client(log_file_path: Path) -> tuple[TestClient, logging.Logger]
 
 def test_clear_logs_truncates_active_file_and_removes_backups(tmp_path) -> None:
     log_file_path = tmp_path / 'app.log'
-    client, logger = create_test_client(log_file_path)
+    client, logger = create_test_client(log_file_path, backup_count=2)
 
     try:
         logger.info('first log line')
         for handler in logger.handlers:
             handler.flush()
 
-        for index in range(1, 6):
+        for index in range(1, 4):
             (tmp_path / f'app.log.{index}').write_text(f'backup-{index}', encoding='utf-8')
 
         response = client.delete('/logs')
 
         assert response.status_code == 204
         assert log_file_path.read_text(encoding='utf-8') == ''
-        for index in range(1, 6):
+        for index in range(1, 3):
             assert not (tmp_path / f'app.log.{index}').exists()
+        assert (tmp_path / 'app.log.3').exists()
     finally:
         client.close()
         for handler in logger.handlers[:]:
