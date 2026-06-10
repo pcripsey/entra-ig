@@ -71,6 +71,10 @@ class SyncService:
         self._schedule_sync_type = schedule.get('sync_type', 'full')
         self._schedule_updated_at = schedule['updated_at']
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
+        self._logger.debug(
+            'SyncService initialized: schedule_enabled=%s, interval_minutes=%d, sync_type=%s',
+            self._schedule_enabled, self._schedule_interval_minutes, self._schedule_sync_type
+        )
 
     async def shutdown(self) -> None:
         if self._scheduler_task:
@@ -87,6 +91,10 @@ class SyncService:
         self._schedule_sync_type = schedule.get('sync_type', 'full')
         self._schedule_updated_at = schedule['updated_at']
         self._schedule_change_event.set()
+        self._logger.debug(
+            'Schedule updated: enabled=%s, interval_minutes=%d, sync_type=%s',
+            enabled, interval_minutes, sync_type
+        )
 
     async def start(self, sync_type: str = 'full') -> str:
         async with self._start_lock:
@@ -99,11 +107,13 @@ class SyncService:
             progress = LiveProgress()
             self._live_progress = progress
             self._task = asyncio.create_task(self._run(run_id, sync_type, progress))
+            self._logger.debug('Queued %s sync run %s', sync_type, run_id)
             return run_id
 
     async def _run(self, run_id: str, sync_type: str, progress: LiveProgress) -> None:
         try:
             await self._run_store.update_run(run_id, status='running')
+            self._logger.debug('Run %s transitioning to running', run_id)
             result = await self._exporter.export(run_id, sync_type=sync_type, run_store=self._run_store, progress=progress)
             await self._run_store.update_run(
                 run_id,
@@ -160,6 +170,7 @@ class SyncService:
                 self._schedule_change_event.clear()
 
                 try:
+                    self._logger.debug('Scheduler waiting %.1f seconds until next %s sync', wait_seconds, self._schedule_sync_type)
                     await asyncio.wait_for(self._schedule_change_event.wait(), timeout=wait_seconds)
                     continue
                 except asyncio.TimeoutError:
