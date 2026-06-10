@@ -368,3 +368,26 @@ th {
   font-style: italic;
   margin: 0 0 0.75rem;
 }
+
+/* ── Throttle warning ───────────────────────────── */
+.throttle-warning {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 14px;
+  background: #fff8ed;
+  border: 1px solid rgba(231, 127, 35, 0.35);
+}
+
+.throttle-label {
+  margin: 0 0 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #b55d0f;
+}
+
+.throttle-time {
+  margin: 0;
+  font-size: 0.775rem;
+  color: #8a4a0f;
+  opacity: 0.85;
+}

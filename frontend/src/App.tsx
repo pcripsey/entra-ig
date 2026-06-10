@@ -58,8 +58,13 @@ type LiveProgressResponse = {
   users_fetched: number
   groups_fetched: number
   memberships_fetched: number
+  group_owners_fetched: number
+  nested_groups_fetched: number
   roles_fetched: number
   role_memberships_fetched: number
+  throttle_count: number
+  last_throttled_at: string | null
+  last_throttled_operation: string | null
 }
 
 type LogResponse = {
@@ -425,9 +430,19 @@ function App() {
                 <div><dt>Users</dt><dd>{status.live_progress.users_fetched.toLocaleString()}</dd></div>
                 <div><dt>Groups</dt><dd>{status.live_progress.groups_fetched.toLocaleString()}</dd></div>
                 <div><dt>Group memberships</dt><dd>{status.live_progress.memberships_fetched.toLocaleString()}</dd></div>
+                <div><dt>Group owners</dt><dd>{status.live_progress.group_owners_fetched.toLocaleString()}</dd></div>
+                <div><dt>Nested groups</dt><dd>{status.live_progress.nested_groups_fetched.toLocaleString()}</dd></div>
                 <div><dt>Roles</dt><dd>{status.live_progress.roles_fetched.toLocaleString()}</dd></div>
                 <div><dt>Role memberships</dt><dd>{status.live_progress.role_memberships_fetched.toLocaleString()}</dd></div>
               </dl>
+              {status.live_progress.throttle_count > 0 ? (
+                <div className="throttle-warning">
+                  <p className="throttle-label">⚠ Throttled {status.live_progress.throttle_count.toLocaleString()} time{status.live_progress.throttle_count !== 1 ? 's' : ''}{status.live_progress.last_throttled_operation ? ` — ${status.live_progress.last_throttled_operation}` : ''}</p>
+                  {status.live_progress.last_throttled_at ? (
+                    <p className="throttle-time">Last throttled at {new Date(status.live_progress.last_throttled_at).toLocaleTimeString()}</p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </article>

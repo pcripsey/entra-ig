@@ -57,8 +57,13 @@ class LiveProgressResponse(BaseModel):
     users_fetched: int
     groups_fetched: int
     memberships_fetched: int
+    group_owners_fetched: int = 0
+    nested_groups_fetched: int = 0
     roles_fetched: int
     role_memberships_fetched: int
+    throttle_count: int = 0
+    last_throttled_at: str | None = None
+    last_throttled_operation: str | None = None
 
 
 class SyncStatusResponse(BaseModel):
