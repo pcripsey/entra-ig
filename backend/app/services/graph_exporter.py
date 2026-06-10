@@ -316,8 +316,18 @@ class GraphExportService:
                 tokens: dict[str, str] = {}
                 if users_delta_link:
                     tokens['users'] = users_delta_link
+                else:
+                    self._logger.warning(
+                        'No users delta link returned for run %s; future incremental syncs will fall back to full.',
+                        run_id,
+                    )
                 if groups_delta_link:
                     tokens['groups'] = groups_delta_link
+                else:
+                    self._logger.warning(
+                        'No groups delta link returned for run %s; future incremental syncs will fall back to full.',
+                        run_id,
+                    )
                 if tokens:
                     await run_store.update_delta_tokens(tokens)
                     self._logger.debug('Stored delta tokens for run %s', run_id)
@@ -890,21 +900,30 @@ class GraphExportService:
         if response is None:
             return None
 
+        def _extract_delta_link(obj: Any) -> str | None:
+            link: str | None = getattr(obj, 'odata_delta_link', None)
+            if not link:
+                additional_data = getattr(obj, 'additional_data', None) or {}
+                link = additional_data.get('@odata.deltaLink')
+            return link
+
         iterator = PageIterator(response, client.request_adapter)
-        # Preserve the raw API response so we can read odata_delta_link from it.
-        # PageIterator wraps each page in a PageResult which strips the delta link,
-        # so we must hold on to the original response objects ourselves.
-        last_raw_response = response
+        # Accumulate the delta link across all pages. The Graph API only includes
+        # odata_delta_link on the *last* page of a delta query response. We capture
+        # it speculatively from every raw response so it is never lost if
+        # PageIterator wraps a page in an object that strips the attribute.
+        accumulated_delta_link: str | None = _extract_delta_link(response)
+
         while True:
             iterator.enumerate(callback)
             if not iterator.current_page or not iterator.current_page.odata_next_link:
                 if not iterator.current_page:
-                    return None
-                delta_link: str | None = getattr(last_raw_response, 'odata_delta_link', None)
-                if not delta_link:
-                    additional_data = getattr(last_raw_response, 'additional_data', None) or {}
-                    delta_link = additional_data.get('@odata.deltaLink')
-                return delta_link
+                    return accumulated_delta_link
+                # One final attempt to read the delta link from the last page.
+                candidate = _extract_delta_link(iterator.current_page)
+                if candidate:
+                    accumulated_delta_link = candidate
+                return accumulated_delta_link
             # Use fetch_next_page() rather than next() so we receive the raw
             # API response (with odata_delta_link) instead of a PageResult that
             # discards it.
@@ -915,8 +934,11 @@ class GraphExportService:
                 progress=progress,
             )
             if not raw_next:
-                return None
-            last_raw_response = raw_next
+                return accumulated_delta_link
+            # Speculatively capture the delta link from this page before advancing.
+            candidate = _extract_delta_link(raw_next)
+            if candidate:
+                accumulated_delta_link = candidate
             iterator.current_page = raw_next
             iterator.pause_index = 0
 

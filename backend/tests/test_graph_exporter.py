@@ -422,3 +422,55 @@ def test_iterate_collection_prefers_direct_delta_link(monkeypatch) -> None:
     )
 
     assert delta_link == 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=direct'
+
+
+def test_iterate_collection_returns_delta_link_from_additional_data_on_last_page_of_multipage_response(monkeypatch) -> None:
+    """Regression test: delta link in additional_data on the last raw page must not be lost.
+
+    Simulates the SDK stripping odata_delta_link from the fetch_next_page() result while
+    still placing it in additional_data, which is the real-world failure mode for large
+    collections (e.g. 70k+ users spanning many pages).
+    """
+    # The last page has odata_delta_link=None (stripped by SDK) but it's in additional_data.
+    page2 = SimpleNamespace(
+        value=['item2'],
+        odata_next_link=None,
+        odata_delta_link=None,
+        additional_data={'@odata.deltaLink': 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=fromadditional'},
+    )
+
+    class FakePageIterator:
+        def __init__(self, response, request_adapter):
+            self.current_page = response
+            self.pause_index = 0
+
+        def enumerate(self, callback):
+            for item in self.current_page.value:
+                callback(item)
+
+        async def fetch_next_page(self):
+            return page2
+
+    monkeypatch.setattr(graph_exporter, 'PageIterator', FakePageIterator)
+
+    exporter = GraphExportService(Settings())
+    page1 = SimpleNamespace(
+        value=['item1'],
+        odata_next_link='https://graph.microsoft.com/v1.0/users/delta?$skiptoken=page2',
+        odata_delta_link=None,
+        additional_data={},
+    )
+
+    collected: list[str] = []
+
+    delta_link = asyncio.run(
+        exporter._iterate_collection(
+            page1,
+            SimpleNamespace(request_adapter=None),
+            lambda item: collected.append(item) or True,
+            operation_name='test iterate collection multipage additional_data',
+        )
+    )
+
+    assert delta_link == 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=fromadditional'
+    assert collected == ['item1', 'item2']
