@@ -346,6 +346,52 @@ def test_iterate_collection_reads_delta_link_from_additional_data(monkeypatch) -
     assert delta_link == 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=abc123'
 
 
+def test_iterate_collection_reads_delta_link_from_last_page_of_multipage_response(monkeypatch) -> None:
+    """Delta link must be read from the final raw page, not iterator.current_page (a PageResult)."""
+    page2 = SimpleNamespace(
+        value=['item2'],
+        odata_next_link=None,
+        odata_delta_link='https://graph.microsoft.com/v1.0/users/delta?$deltatoken=final',
+        additional_data={},
+    )
+
+    class FakePageIterator:
+        def __init__(self, response, request_adapter):
+            self.current_page = response
+            self.pause_index = 0
+
+        def enumerate(self, callback):
+            for item in self.current_page.value:
+                callback(item)
+
+        async def fetch_next_page(self):
+            return page2
+
+    monkeypatch.setattr(graph_exporter, 'PageIterator', FakePageIterator)
+
+    exporter = GraphExportService(Settings())
+    page1 = SimpleNamespace(
+        value=['item1'],
+        odata_next_link='https://graph.microsoft.com/v1.0/users/delta?$skiptoken=page2',
+        odata_delta_link=None,
+        additional_data={},
+    )
+
+    collected: list[str] = []
+
+    delta_link = asyncio.run(
+        exporter._iterate_collection(
+            page1,
+            SimpleNamespace(request_adapter=None),
+            lambda item: collected.append(item) or True,
+            operation_name='test iterate collection multipage',
+        )
+    )
+
+    assert delta_link == 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=final'
+    assert collected == ['item1', 'item2']
+
+
 def test_iterate_collection_prefers_direct_delta_link(monkeypatch) -> None:
     class FakePageIterator:
         def __init__(self, response, request_adapter):

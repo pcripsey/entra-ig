@@ -864,24 +864,32 @@ class GraphExportService:
             return None
 
         iterator = PageIterator(response, client.request_adapter)
+        # Preserve the raw API response so we can read odata_delta_link from it.
+        # PageIterator wraps each page in a PageResult which strips the delta link,
+        # so we must hold on to the original response objects ourselves.
+        last_raw_response = response
         while True:
             iterator.enumerate(callback)
             if not iterator.current_page or not iterator.current_page.odata_next_link:
                 if not iterator.current_page:
                     return None
-                delta_link: str | None = getattr(iterator.current_page, 'odata_delta_link', None)
+                delta_link: str | None = getattr(last_raw_response, 'odata_delta_link', None)
                 if not delta_link:
-                    additional_data = getattr(iterator.current_page, 'additional_data', None) or {}
+                    additional_data = getattr(last_raw_response, 'additional_data', None) or {}
                     delta_link = additional_data.get('@odata.deltaLink')
                 return delta_link
-            next_page = await self._run_with_retry(
-                iterator.next,
+            # Use fetch_next_page() rather than next() so we receive the raw
+            # API response (with odata_delta_link) instead of a PageResult that
+            # discards it.
+            raw_next = await self._run_with_retry(
+                iterator.fetch_next_page,
                 operation_name=f'{operation_name} page',
                 progress=progress,
             )
-            if not next_page:
+            if not raw_next:
                 return None
-            iterator.current_page = next_page
+            last_raw_response = raw_next
+            iterator.current_page = raw_next
             iterator.pause_index = 0
 
     async def _run_with_retry(
