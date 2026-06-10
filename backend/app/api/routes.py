@@ -93,8 +93,13 @@ async def get_status(request: Request) -> SyncStatusResponse:
             users_fetched=lp.users_fetched,
             groups_fetched=lp.groups_fetched,
             memberships_fetched=lp.memberships_fetched,
+            group_owners_fetched=lp.group_owners_fetched,
+            nested_groups_fetched=lp.nested_groups_fetched,
             roles_fetched=lp.roles_fetched,
             role_memberships_fetched=lp.role_memberships_fetched,
+            throttle_count=lp.throttle_count,
+            last_throttled_at=lp.last_throttled_at,
+            last_throttled_operation=lp.last_throttled_operation,
         )
         if lp is not None
         else None

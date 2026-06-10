@@ -234,6 +234,8 @@ class LiveProgress:
     users_fetched: int = 0
     groups_fetched: int = 0
     memberships_fetched: int = 0
+    group_owners_fetched: int = 0
+    nested_groups_fetched: int = 0
     roles_fetched: int = 0
     role_memberships_fetched: int = 0
     # Throttle tracking
@@ -711,6 +713,8 @@ class GraphExportService:
                         uid = to_csv_value(getattr(owner, 'id', None))
                         if uid:
                             owner_ids.append(uid)
+                            if progress is not None:
+                                progress.group_owners_fetched += 1
                     return True
 
                 await self._iterate_collection(
@@ -756,6 +760,8 @@ class GraphExportService:
                         child_id = to_csv_value(getattr(member, 'id', None))
                         if child_id:
                             nesting_pairs.add((group_id, child_id))
+                            if progress is not None:
+                                progress.nested_groups_fetched += 1
                     return True
 
                 await self._iterate_collection(
