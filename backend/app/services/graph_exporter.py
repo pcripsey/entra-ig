@@ -256,11 +256,13 @@ class GraphExportService:
         if not self._settings.graph_configured:
             raise RuntimeError('TENANT_ID, CLIENT_ID, and CLIENT_SECRET must all be configured.')
 
+        self._logger.debug('Starting %s export for run %s', sync_type, run_id)
         if sync_type == 'incremental' and run_store is not None:
             return await self._export_incremental(run_id, run_store, progress)
         return await self._export_full(run_id, run_store, progress)
 
     async def _export_full(self, run_id: str, run_store: RunStore | None, progress: LiveProgress | None = None) -> ExportResult:
+        self._logger.debug('Creating Graph client for full export run %s', run_id)
         credential, client = self._create_graph_client(
             tenant_id=self._settings.tenant_id,
             client_id=self._settings.client_id,
@@ -271,24 +273,31 @@ class GraphExportService:
             if progress is not None:
                 progress.stage = 'Fetching users'
             users, users_delta_link = await self._fetch_users(client, progress)
+            self._logger.debug('Fetched %d users for run %s', len(users), run_id)
             if progress is not None:
                 progress.stage = 'Fetching groups'
             groups, groups_delta_link = await self._fetch_groups(client, progress)
+            self._logger.debug('Fetched %d groups for run %s', len(groups), run_id)
             if progress is not None:
                 progress.stage = 'Fetching memberships'
             memberships = await self._fetch_memberships(client, groups, progress)
+            self._logger.debug('Fetched %d memberships for run %s', len(memberships), run_id)
             if progress is not None:
                 progress.stage = 'Fetching group owners'
             group_owners = await self._fetch_group_owners(client, groups, progress)
+            self._logger.debug('Fetched %d group owner relationships for run %s', len(group_owners), run_id)
             if progress is not None:
                 progress.stage = 'Fetching nested groups'
             nested_groups = await self._fetch_nested_groups(client, groups, progress)
+            self._logger.debug('Fetched %d nested group relationships for run %s', len(nested_groups), run_id)
             if progress is not None:
                 progress.stage = 'Fetching roles'
             roles = await self._fetch_roles(client, progress)
+            self._logger.debug('Fetched %d roles for run %s', len(roles), run_id)
             if progress is not None:
                 progress.stage = 'Fetching role memberships'
             role_memberships = await self._fetch_role_memberships(client, roles, progress)
+            self._logger.debug('Fetched %d role memberships for run %s', len(role_memberships), run_id)
             if progress is not None:
                 progress.stage = 'Writing exports'
             result = self._write_exports(
@@ -311,6 +320,7 @@ class GraphExportService:
                     tokens['groups'] = groups_delta_link
                 if tokens:
                     await run_store.update_delta_tokens(tokens)
+                    self._logger.debug('Stored delta tokens for run %s', run_id)
 
             return result
         finally:
@@ -327,6 +337,7 @@ class GraphExportService:
         delta_tokens = await run_store.get_delta_tokens()
         users_token = delta_tokens.get('users')
         groups_token = delta_tokens.get('groups')
+        self._logger.debug('Retrieved delta tokens for incremental run %s: users_token=%s, groups_token=%s', run_id, bool(users_token), bool(groups_token))
 
         latest_dir = self._settings.export_base_dir / 'latest'
         users_csv = latest_dir / 'users.csv'
@@ -351,11 +362,13 @@ class GraphExportService:
                 modified_users, deleted_user_ids, new_users_token = await self._fetch_users_delta(
                     client, users_token, progress
                 )
+                self._logger.debug('Incremental run %s: %d modified users, %d deleted users', run_id, len(modified_users), len(deleted_user_ids))
                 if progress is not None:
                     progress.stage = 'Fetching groups'
                 modified_groups, deleted_group_ids, new_groups_token = await self._fetch_groups_delta(
                     client, groups_token, progress
                 )
+                self._logger.debug('Incremental run %s: %d modified groups, %d deleted groups', run_id, len(modified_groups), len(deleted_group_ids))
             except APIError as exc:
                 status_code = getattr(exc, 'response_status_code', None)
                 if status_code == 410:
@@ -384,6 +397,7 @@ class GraphExportService:
 
             users = sorted(existing_users.values(), key=lambda r: (r.get('userPrincipalName', ''), r.get('id', '')))
             groups = sorted(existing_groups.values(), key=lambda r: (r.get('displayName', ''), r.get('id', '')))
+            self._logger.debug('Incremental run %s: merged baseline → %d users, %d groups', run_id, len(users), len(groups))
 
             if progress is not None:
                 progress.stage = 'Fetching memberships'
@@ -422,6 +436,7 @@ class GraphExportService:
                 new_tokens['groups'] = new_groups_token
             if new_tokens:
                 await run_store.update_delta_tokens(new_tokens)
+                self._logger.debug('Stored refreshed delta tokens for incremental run %s', run_id)
 
             return result
         finally:
@@ -432,6 +447,7 @@ class GraphExportService:
         if not config['tenant_id'] or not config['client_id'] or not config['client_secret']:
             return False, 'Graph credentials are not configured.'
 
+        self._logger.debug('Testing Graph connection (tenant=%s, client=%s)', config.get('tenant_id'), config.get('client_id'))
         credential, client = self._create_graph_client(
             tenant_id=config['tenant_id'],
             client_id=config['client_id'],
@@ -450,6 +466,7 @@ class GraphExportService:
                 lambda: client.users.get(request_configuration=request_configuration),
                 operation_name='graph connectivity check',
             )
+            self._logger.debug('Graph connection check succeeded')
             return True, 'Microsoft Graph connection succeeded.'
         except Exception as exc:  # noqa: BLE001
             return False, str(exc)
@@ -482,6 +499,7 @@ class GraphExportService:
         return credential, client
 
     async def _fetch_users(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> tuple[list[dict[str, str]], str | None]:
+        self._logger.debug('Fetching all users (page size %d)', self._settings.graph_page_size)
         request_configuration = RequestConfiguration(
             query_parameters=UsersDeltaRequestBuilder.DeltaRequestBuilderGetQueryParameters(
                 select=[
@@ -532,6 +550,7 @@ class GraphExportService:
 
         delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch users', progress=progress)
         rows.sort(key=lambda row: (row['userPrincipalName'], row['id']))
+        self._logger.debug('Finished fetching users: %d rows collected', len(rows))
         return rows, delta_link
 
     async def _fetch_users_delta(
@@ -541,6 +560,7 @@ class GraphExportService:
 
         Returns (modified_rows, deleted_ids, new_delta_link).
         """
+        self._logger.debug('Fetching user delta changes')
         builder = UsersDeltaRequestBuilder(client.request_adapter, delta_token)
         response = await self._run_with_retry(
             builder.get,
@@ -564,9 +584,11 @@ class GraphExportService:
             return True
 
         delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch users delta', progress=progress)
+        self._logger.debug('Finished user delta: %d modified, %d deleted', len(modified), len(deleted_ids))
         return modified, deleted_ids, delta_link
 
     async def _fetch_groups(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> tuple[list[dict[str, str]], str | None]:
+        self._logger.debug('Fetching all groups (page size %d)', self._settings.graph_page_size)
         request_configuration = RequestConfiguration(
             query_parameters=GroupsDeltaRequestBuilder.DeltaRequestBuilderGetQueryParameters(
                 select=[
@@ -596,6 +618,7 @@ class GraphExportService:
 
         delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch groups', progress=progress)
         rows.sort(key=lambda row: (row['displayName'], row['id']))
+        self._logger.debug('Finished fetching groups: %d rows collected', len(rows))
         return rows, delta_link
 
     async def _fetch_groups_delta(
@@ -605,6 +628,7 @@ class GraphExportService:
 
         Returns (modified_rows, deleted_ids, new_delta_link).
         """
+        self._logger.debug('Fetching group delta changes')
         builder = GroupsDeltaRequestBuilder(client.request_adapter, delta_token)
         response = await self._run_with_retry(
             builder.get,
@@ -628,6 +652,7 @@ class GraphExportService:
             return True
 
         delta_link = await self._iterate_collection(response, client, collect, operation_name='fetch groups delta', progress=progress)
+        self._logger.debug('Finished group delta: %d modified, %d deleted', len(modified), len(deleted_ids))
         return modified, deleted_ids, delta_link
 
     async def _fetch_memberships(self, client: GraphServiceClient, groups: list[dict[str, str]], progress: LiveProgress | None = None) -> list[dict[str, str]]:
@@ -673,7 +698,7 @@ class GraphExportService:
                     operation_name=f'fetch memberships for {group_id}',
                     progress=progress,
                 )
-                self._logger.info('Processed group membership page set for %s', group_id)
+                self._logger.debug('Processed group membership page set for %s', group_id)
 
         await asyncio.gather(*(collect_group_members(group) for group in groups))
 
@@ -771,6 +796,7 @@ class GraphExportService:
         return [{'parentId': parent_id, 'childId': child_id} for parent_id, child_id in sorted(nesting_pairs)]
 
     async def _fetch_roles(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> list[dict[str, str]]:
+        self._logger.debug('Fetching directory roles')
         request_configuration = RequestConfiguration(
             query_parameters=DirectoryRolesRequestBuilder.DirectoryRolesRequestBuilderGetQueryParameters(
                 select=['id', 'roleTemplateId', 'displayName', 'description'],
@@ -792,6 +818,7 @@ class GraphExportService:
 
         await self._iterate_collection(response, client, collect, operation_name='fetch roles', progress=progress)
         rows.sort(key=lambda row: (row['displayName'], row['id']))
+        self._logger.debug('Finished fetching roles: %d rows collected', len(rows))
         return rows
 
     async def _fetch_role_memberships(
@@ -836,7 +863,7 @@ class GraphExportService:
                     operation_name=f'fetch role memberships for {role_id}',
                     progress=progress,
                 )
-                self._logger.info('Processed role membership page set for %s', role_id)
+                self._logger.debug('Processed role membership page set for %s', role_id)
 
         await asyncio.gather(*(collect_role_members(role) for role in roles))
 
@@ -881,6 +908,7 @@ class GraphExportService:
             # Use fetch_next_page() rather than next() so we receive the raw
             # API response (with odata_delta_link) instead of a PageResult that
             # discards it.
+            self._logger.debug('Fetching next page for operation "%s"', operation_name)
             raw_next = await self._run_with_retry(
                 iterator.fetch_next_page,
                 operation_name=f'{operation_name} page',
@@ -914,6 +942,7 @@ class GraphExportService:
         max_delay = self._max_retry_delay_seconds
 
         for attempt in range(1, max_attempts + 1):
+            self._logger.debug('Attempt %d/%d for operation "%s"', attempt, max_attempts, operation_name)
             try:
                 return await operation()
             except APIError as exc:
@@ -1176,6 +1205,7 @@ class GraphExportService:
         latest_directory = self._settings.export_base_dir / 'latest'
         run_directory.mkdir(parents=True, exist_ok=True)
         latest_directory.mkdir(parents=True, exist_ok=True)
+        self._logger.debug('Writing export CSVs to %s', run_directory)
 
         users_file = self._write_csv(run_directory / 'users.csv', USER_COLUMNS, users)
         groups_file = self._write_csv(run_directory / 'groups.csv', GROUP_COLUMNS, groups)
@@ -1243,6 +1273,7 @@ class GraphExportService:
             [],
         )
 
+        self._logger.debug('Copying exports to latest directory %s', latest_directory)
         shutil.copyfile(users_file, latest_directory / 'users.csv')
         shutil.copyfile(groups_file, latest_directory / 'groups.csv')
         shutil.copyfile(memberships_file, latest_directory / 'memberships.csv')
@@ -1265,6 +1296,10 @@ class GraphExportService:
             latest_directory / 'ig_permission_hierarchy_parent_child.csv',
         )
 
+        self._logger.debug(
+            'Export complete for run %s: %d users, %d groups, %d memberships, %d roles, %d role memberships',
+            run_id, len(users), len(groups), len(memberships), len(roles), len(role_memberships)
+        )
         return ExportResult(
             users_count=len(users),
             groups_count=len(groups),

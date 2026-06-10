@@ -118,11 +118,14 @@ async def get_status(request: Request) -> SyncStatusResponse:
 
 @router.post('/sync', response_model=SyncStartResponse, status_code=202)
 async def start_sync(request: Request, payload: SyncStartRequest = SyncStartRequest()) -> SyncStartResponse:
+    logger = request.app.state.logger
+    logger.debug('Sync requested: sync_type=%s', payload.sync_type)
     sync_service = request.app.state.sync_service
     try:
         run_id = await sync_service.start(sync_type=payload.sync_type)
     except SyncAlreadyRunningError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    logger.debug('Sync run %s queued (type=%s)', run_id, payload.sync_type)
     return SyncStartResponse(run_id=run_id, status='queued', sync_type=payload.sync_type)
 
 
@@ -212,6 +215,7 @@ async def update_log_level(request: Request, payload: LogLevelUpdateRequest) -> 
     logger.setLevel(payload.log_level)
     for handler in logger.handlers:
         handler.setLevel(payload.log_level)
+    logger.debug('Log level changed to %s', payload.log_level)
     return LogLevelResponse(log_level=payload.log_level)
 
 
@@ -229,6 +233,8 @@ async def get_schedule(request: Request) -> ScheduleResponse:
 
 @router.put('/schedule', response_model=ScheduleResponse)
 async def update_schedule(request: Request, payload: ScheduleUpdateRequest) -> ScheduleResponse:
+    logger = request.app.state.logger
+    logger.debug('Schedule update requested: enabled=%s, interval=%d, sync_type=%s', payload.enabled, payload.interval_minutes, payload.sync_type)
     sync_service = request.app.state.sync_service
     await sync_service.update_schedule(
         enabled=payload.enabled,
@@ -252,6 +258,8 @@ async def get_retry_config(request: Request) -> RetryConfigResponse:
 
 @router.put('/retry-config', response_model=RetryConfigResponse)
 async def update_retry_config(request: Request, payload: RetryConfigUpdateRequest) -> RetryConfigResponse:
+    logger = request.app.state.logger
+    logger.debug('Retry config update: max_attempts=%d, max_delay=%ds', payload.max_retry_attempts, payload.max_retry_delay_seconds)
     run_store = request.app.state.run_store
     await run_store.update_retry_config(
         max_retry_attempts=payload.max_retry_attempts,
