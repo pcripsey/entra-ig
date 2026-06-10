@@ -291,7 +291,7 @@ Columns:
 Raw Entra group attributes — one row per group.
 
 Columns:
-`id,displayName,description,securityEnabled,mailEnabled,mailNickname,onPremisesObjectIdentifier,onPremisesDistinguishedName`
+`id,displayName,description,securityEnabled,mailEnabled,mailNickname`
 
 | Column | Entra ID source |
 |---|---|
@@ -301,8 +301,6 @@ Columns:
 | `securityEnabled` | `securityEnabled` |
 | `mailEnabled` | `mailEnabled` |
 | `mailNickname` | `mailNickname` |
-| `onPremisesObjectIdentifier` | `onPremisesObjectIdentifier` |
-| `onPremisesDistinguishedName` | `onPremisesDistinguishedName` |
 
 ### memberships.csv
 

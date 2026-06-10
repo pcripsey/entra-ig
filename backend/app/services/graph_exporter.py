@@ -68,7 +68,6 @@ GROUP_COLUMNS = (
     'securityEnabled',
     'mailEnabled',
     'mailNickname',
-    'onPremisesDistinguishedName',
 )
 MEMBERSHIP_COLUMNS = ('group_id', 'user_id')
 ROLE_COLUMNS = ('id', 'roleTemplateId', 'displayName', 'description')
@@ -577,7 +576,6 @@ class GraphExportService:
                     'securityEnabled',
                     'mailEnabled',
                     'mailNickname',
-                    'onPremisesDistinguishedName',
                 ],
                 top=self._settings.graph_page_size,
             )
@@ -995,7 +993,6 @@ class GraphExportService:
             'securityEnabled': to_csv_value(getattr(group, 'security_enabled', None)),
             'mailEnabled': to_csv_value(getattr(group, 'mail_enabled', None)),
             'mailNickname': to_csv_value(getattr(group, 'mail_nickname', None)),
-            'onPremisesDistinguishedName': to_csv_value(getattr(group, 'on_premises_distinguished_name', None)),
         }
 
     def _role_to_row(self, role: Any) -> dict[str, str]:

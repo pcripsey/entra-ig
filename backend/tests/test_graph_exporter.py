@@ -192,7 +192,6 @@ def test_group_to_row_maps_expanded_group_fields() -> None:
         security_enabled=True,
         mail_enabled=False,
         mail_nickname='groupa',
-        on_premises_distinguished_name='CN=GroupA',
     )
 
     assert exporter._group_to_row(group) == {
@@ -202,7 +201,6 @@ def test_group_to_row_maps_expanded_group_fields() -> None:
         'securityEnabled': 'true',
         'mailEnabled': 'false',
         'mailNickname': 'groupa',
-        'onPremisesDistinguishedName': 'CN=GroupA',
     }
 
 
