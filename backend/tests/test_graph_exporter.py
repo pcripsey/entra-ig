@@ -5,6 +5,7 @@ import csv
 from types import SimpleNamespace
 
 from app.config import Settings
+from app.services import graph_exporter
 from app.services.graph_exporter import GraphExportService
 
 
@@ -311,3 +312,67 @@ def test_fetch_groups_uses_delta_endpoint() -> None:
     assert rows == []
     assert len(delta_called) == 1
     assert delta_link == 'https://graph.microsoft.com/v1.0/groups/delta?$deltatoken=test-token'
+
+
+def test_iterate_collection_reads_delta_link_from_additional_data(monkeypatch) -> None:
+    class FakePageIterator:
+        def __init__(self, response, request_adapter):
+            self.current_page = response
+            self.pause_index = 0
+
+        def enumerate(self, callback):
+            for item in self.current_page.value:
+                callback(item)
+
+    monkeypatch.setattr(graph_exporter, 'PageIterator', FakePageIterator)
+
+    exporter = GraphExportService(Settings())
+    page = SimpleNamespace(
+        value=[],
+        odata_next_link=None,
+        odata_delta_link=None,
+        additional_data={'@odata.deltaLink': 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=abc123'},
+    )
+
+    delta_link = asyncio.run(
+        exporter._iterate_collection(
+            page,
+            SimpleNamespace(request_adapter=None),
+            lambda _: True,
+            operation_name='test iterate collection',
+        )
+    )
+
+    assert delta_link == 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=abc123'
+
+
+def test_iterate_collection_prefers_direct_delta_link(monkeypatch) -> None:
+    class FakePageIterator:
+        def __init__(self, response, request_adapter):
+            self.current_page = response
+            self.pause_index = 0
+
+        def enumerate(self, callback):
+            for item in self.current_page.value:
+                callback(item)
+
+    monkeypatch.setattr(graph_exporter, 'PageIterator', FakePageIterator)
+
+    exporter = GraphExportService(Settings())
+    page = SimpleNamespace(
+        value=[],
+        odata_next_link=None,
+        odata_delta_link='https://graph.microsoft.com/v1.0/users/delta?$deltatoken=direct',
+        additional_data={'@odata.deltaLink': 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=ignored'},
+    )
+
+    delta_link = asyncio.run(
+        exporter._iterate_collection(
+            page,
+            SimpleNamespace(request_adapter=None),
+            lambda _: True,
+            operation_name='test iterate collection',
+        )
+    )
+
+    assert delta_link == 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=direct'

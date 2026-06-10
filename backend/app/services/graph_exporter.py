@@ -867,11 +867,12 @@ class GraphExportService:
         while True:
             iterator.enumerate(callback)
             if not iterator.current_page or not iterator.current_page.odata_next_link:
-                delta_link: str | None = (
-                    getattr(iterator.current_page, 'odata_delta_link', None)
-                    if iterator.current_page
-                    else None
-                )
+                if not iterator.current_page:
+                    return None
+                delta_link: str | None = getattr(iterator.current_page, 'odata_delta_link', None)
+                if not delta_link:
+                    additional_data = getattr(iterator.current_page, 'additional_data', None) or {}
+                    delta_link = additional_data.get('@odata.deltaLink')
                 return delta_link
             next_page = await self._run_with_retry(
                 iterator.next,
