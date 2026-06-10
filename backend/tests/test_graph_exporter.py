@@ -192,7 +192,6 @@ def test_group_to_row_maps_expanded_group_fields() -> None:
         security_enabled=True,
         mail_enabled=False,
         mail_nickname='groupa',
-        on_premises_object_identifier='OBJ-1',
         on_premises_distinguished_name='CN=GroupA',
     )
 
@@ -203,7 +202,6 @@ def test_group_to_row_maps_expanded_group_fields() -> None:
         'securityEnabled': 'true',
         'mailEnabled': 'false',
         'mailNickname': 'groupa',
-        'onPremisesObjectIdentifier': 'OBJ-1',
         'onPremisesDistinguishedName': 'CN=GroupA',
     }
 

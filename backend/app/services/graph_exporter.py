@@ -68,7 +68,6 @@ GROUP_COLUMNS = (
     'securityEnabled',
     'mailEnabled',
     'mailNickname',
-    'onPremisesObjectIdentifier',
     'onPremisesDistinguishedName',
 )
 MEMBERSHIP_COLUMNS = ('group_id', 'user_id')
@@ -578,7 +577,6 @@ class GraphExportService:
                     'securityEnabled',
                     'mailEnabled',
                     'mailNickname',
-                    'onPremisesObjectIdentifier',
                     'onPremisesDistinguishedName',
                 ],
                 top=self._settings.graph_page_size,
@@ -997,7 +995,6 @@ class GraphExportService:
             'securityEnabled': to_csv_value(getattr(group, 'security_enabled', None)),
             'mailEnabled': to_csv_value(getattr(group, 'mail_enabled', None)),
             'mailNickname': to_csv_value(getattr(group, 'mail_nickname', None)),
-            'onPremisesObjectIdentifier': to_csv_value(getattr(group, 'on_premises_object_identifier', None)),
             'onPremisesDistinguishedName': to_csv_value(getattr(group, 'on_premises_distinguished_name', None)),
         }
 
