@@ -243,3 +243,75 @@ def test_fetch_role_memberships_omits_top_parameter() -> None:
     query_parameters = captured_request_configurations[0].query_parameters
     assert query_parameters.select == ['id']
     assert getattr(query_parameters, 'top', None) is None
+
+
+def test_fetch_users_uses_delta_endpoint() -> None:
+    """_fetch_users must call client.users.delta.get() to obtain an odata_delta_link."""
+    settings = Settings()
+
+    class TestExporter(GraphExportService):
+        async def _run_with_retry(self, operation, *, operation_name, progress=None):
+            return await operation()
+
+        async def _iterate_collection(self, response, client, callback, *, operation_name, progress=None):
+            return 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=test-token'
+
+    delta_called = []
+
+    class FakeDelta:
+        async def get(self, *, request_configuration):
+            delta_called.append(request_configuration)
+            return SimpleNamespace(value=[])
+
+    class FakeUsers:
+        delta = FakeDelta()
+
+        async def get(self, *, request_configuration):
+            raise AssertionError('Must use users.delta.get(), not users.get()')
+
+    class FakeClient:
+        users = FakeUsers()
+        request_adapter = None
+
+    exporter = TestExporter(settings)
+    rows, delta_link = asyncio.run(exporter._fetch_users(FakeClient()))
+
+    assert rows == []
+    assert len(delta_called) == 1
+    assert delta_link == 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=test-token'
+
+
+def test_fetch_groups_uses_delta_endpoint() -> None:
+    """_fetch_groups must call client.groups.delta.get() to obtain an odata_delta_link."""
+    settings = Settings()
+
+    class TestExporter(GraphExportService):
+        async def _run_with_retry(self, operation, *, operation_name, progress=None):
+            return await operation()
+
+        async def _iterate_collection(self, response, client, callback, *, operation_name, progress=None):
+            return 'https://graph.microsoft.com/v1.0/groups/delta?$deltatoken=test-token'
+
+    delta_called = []
+
+    class FakeDelta:
+        async def get(self, *, request_configuration):
+            delta_called.append(request_configuration)
+            return SimpleNamespace(value=[])
+
+    class FakeGroups:
+        delta = FakeDelta()
+
+        async def get(self, *, request_configuration):
+            raise AssertionError('Must use groups.delta.get(), not groups.get()')
+
+    class FakeClient:
+        groups = FakeGroups()
+        request_adapter = None
+
+    exporter = TestExporter(settings)
+    rows, delta_link = asyncio.run(exporter._fetch_groups(FakeClient()))
+
+    assert rows == []
+    assert len(delta_called) == 1
+    assert delta_link == 'https://graph.microsoft.com/v1.0/groups/delta?$deltatoken=test-token'

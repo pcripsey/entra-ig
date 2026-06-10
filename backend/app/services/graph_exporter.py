@@ -16,7 +16,6 @@ from msgraph.generated.directory_roles.directory_roles_request_builder import Di
 from msgraph.generated.directory_roles.item.members.members_request_builder import (
     MembersRequestBuilder as RoleMembersRequestBuilder,
 )
-from msgraph.generated.groups.groups_request_builder import GroupsRequestBuilder
 from msgraph.generated.groups.delta.delta_request_builder import DeltaRequestBuilder as GroupsDeltaRequestBuilder
 from msgraph.generated.groups.item.members.members_request_builder import MembersRequestBuilder
 from msgraph.generated.users.users_request_builder import UsersRequestBuilder
@@ -486,7 +485,7 @@ class GraphExportService:
 
     async def _fetch_users(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> tuple[list[dict[str, str]], str | None]:
         request_configuration = RequestConfiguration(
-            query_parameters=UsersRequestBuilder.UsersRequestBuilderGetQueryParameters(
+            query_parameters=UsersDeltaRequestBuilder.DeltaRequestBuilderGetQueryParameters(
                 select=[
                     'id',
                     'userPrincipalName',
@@ -520,7 +519,7 @@ class GraphExportService:
             )
         )
         response = await self._run_with_retry(
-            lambda: client.users.get(request_configuration=request_configuration),
+            lambda: client.users.delta.get(request_configuration=request_configuration),
             operation_name='fetch users',
             progress=progress,
         )
@@ -571,7 +570,7 @@ class GraphExportService:
 
     async def _fetch_groups(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> tuple[list[dict[str, str]], str | None]:
         request_configuration = RequestConfiguration(
-            query_parameters=GroupsRequestBuilder.GroupsRequestBuilderGetQueryParameters(
+            query_parameters=GroupsDeltaRequestBuilder.DeltaRequestBuilderGetQueryParameters(
                 select=[
                     'id',
                     'displayName',
@@ -586,7 +585,7 @@ class GraphExportService:
             )
         )
         response = await self._run_with_retry(
-            lambda: client.groups.get(request_configuration=request_configuration),
+            lambda: client.groups.delta.get(request_configuration=request_configuration),
             operation_name='fetch groups',
             progress=progress,
         )
