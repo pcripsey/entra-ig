@@ -62,78 +62,136 @@ VITE_API_BASE_URL=http://localhost:8000/api npm run dev
 
 ## Architecture and flow
 
+### High-level overview
+
+**entra-ig** is a full-stack application that bridges Microsoft Entra ID (Azure AD) with OpenText Identity Governance. It:
+
+1. Authenticates to Microsoft Graph using Azure service principal credentials
+2. Fetches identity data (users, groups, roles, memberships) either in full or incrementally
+3. Transforms raw Entra attributes into standardized CSV formats
+4. Exports both raw Entra CSVs and 8 OpenText IG-specific collection files
+5. Provides a React-based admin console for operational control and monitoring
+
 ### Component overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Admin console (React)                    │
-│  ┌──────────────┐  ┌──────────────────────┐  ┌──────────────┐  │
-│  │  Run export  │  │   Refresh schedule   │  │   Run log /  │  │
-│  │  [Full|Incr] │  │ [Full|Incr] interval │  │   history    │  │
-│  └──────┬───────┘  └──────────┬───────────┘  └──────────────┘  │
-└─────────┼────────────────────┼─────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                        Admin console (React)                               │
+│  ┌──────────────┐  ┌──────────────────────┐  ┌──────────────┐             │
+│  │  Run export  │  │   Refresh schedule   │  │   Run log /  │             │
+│  │  [Full|Incr] │  │ [Full|Incr] interval │  │   history    │             │
+│  └──────┬───────┘  └──────────┬───────────┘  └──────────────┘             │
+└─────────┼────────────────────┼─────────────────────────────────────────────┘
           │  POST /api/sync     │  PUT /api/schedule
           ▼                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    FastAPI  (routes.py)                         │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    SyncService                                  │
-│  ┌────────────────────────┐   ┌──────────────────────────────┐  │
-│  │   start(sync_type)     │   │      _scheduler_loop         │  │
-│  │   creates DB run row   │   │  fires on interval, passes   │  │
-│  │   spawns async task    │   │  schedule_sync_type to start()│  │
-│  └──────────┬─────────────┘   └──────────────────────────────┘  │
-└─────────────┼───────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    FastAPI  (routes.py)                                    │
+└──────────────────────────────┬─────────────────────────────────────────────┘
+                               │
+                               ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    SyncService                                             │
+│  ┌────────────────────────────┐   ┌──────────────────────────────┐        │
+│  │   start(sync_type)         │   │      _scheduler_loop         │        │
+│  │   creates DB run row       │   │  fires on interval, passes   │        │
+│  │   spawns async task        │   │  schedule_sync_type to start()│       │
+│  └──────────┬────────────────┘   └──────────────────────────────┘        │
+└─────────────┼─────────────────────────────────────────────────────────────┘
               │  export(run_id, sync_type, run_store)
               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                  GraphExportService                             │
-│                                                                 │
-│   sync_type == "full"            sync_type == "incremental"     │
-│   ┌──────────────────────┐       ┌───────────────────────────┐  │
-│   │ GET /users           │       │ no stored delta tokens?   │  │
-│   │ GET /groups          │       │  └─► fall back to full    │  │
-│   │ GET /groups/*/members│       │ GET /users/delta?token    │  │
-│   │ write CSVs           │       │ GET /groups/delta?token   │  │
-│   │ store delta tokens   │       │ load latest/ CSVs         │  │
-│   └──────────────────────┘       │ merge adds/updates/deletes│  │
-│                                  │ GET /groups/*/members(all)│  │
-│                                  │ write CSVs                │  │
-│                                  │ store new delta tokens    │  │
-│                                  └───────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              SQLite  (RunStore / database.py)                   │
-│  sync_runs     schedule_config     delta_tokens                 │
-│  id            enabled             resource (users|groups)      │
-│  status        interval_minutes    token  (delta link URL)      │
-│  sync_type     sync_type           updated_at                   │
-│  started_at    updated_at                                       │
-│  completed_at                                                   │
-│  users_count                                                    │
-│  …                                                              │
-└─────────────────────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               File system  (data/exports/)                      │
-│  <run_id>/users.csv                                             │
-│  <run_id>/groups.csv                                            │
-│  <run_id>/memberships.csv                                       │
-│  <run_id>/roles.csv                                             │
-│  <run_id>/role_memberships.csv                                  │
-│  latest/users.csv      ◄── always reflects most recent run     │
-│  latest/groups.csv                                              │
-│  latest/memberships.csv                                         │
-│  latest/roles.csv                                               │
-│  latest/role_memberships.csv                                    │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                  GraphExportService                                        │
+│                                                                            │
+│   sync_type == "full"            sync_type == "incremental"               │
+│   ┌──────────────────────┐       ┌───────────────────────────┐            │
+│   │ GET /users           │       │ no stored delta tokens?   │            │
+│   │ GET /groups          │       │  └─► fall back to full    │            │
+│   │ GET /groups/*/members│       │ GET /users/delta?token    │            │
+│   │ write CSVs           │       │ GET /groups/delta?token   │            │
+│   │ store delta tokens   │       │ load latest/ CSVs         │            │
+│   └──────────────────────┘       │ merge adds/updates/deletes│            │
+│                                  │ GET /groups/*/members(all)│            │
+│                                  │ write CSVs                │            │
+│                                  │ store new delta tokens    │            │
+│                                  └───────────────────────────┘            │
+└───────────────┬───────────────────────────────────────────────────────────┘
+                │
+                ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│              SQLite  (RunStore / database.py)                              │
+│  sync_runs     schedule_config     delta_tokens                            │
+│  id            enabled             resource (users|groups)                 │
+│  status        interval_minutes    token  (delta link URL)                 │
+│  sync_type     sync_type           updated_at                              │
+│  started_at    updated_at                                                  │
+│  completed_at                                                              │
+│  users_count                                                               │
+│  …                                                                         │
+└───────────────┬───────────────────────────────────────────────────────────┘
+                │
+                ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│               File system  (data/exports/)                                 │
+│  <run_id>/users.csv                                                        │
+│  <run_id>/groups.csv                                                       │
+│  <run_id>/memberships.csv                                                  │
+│  <run_id>/roles.csv                                                        │
+│  <run_id>/role_memberships.csv                                             │
+│  latest/users.csv      ◄── always reflects most recent run                │
+│  latest/groups.csv                                                         │
+│  latest/memberships.csv                                                    │
+│  latest/roles.csv                                                          │
+│  latest/role_memberships.csv                                               │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Sync execution flow
+
+When an admin (or the scheduler) triggers a sync:
+
+1. **Admin clicks "Run Export"** in the React console
+   - Sends `POST /api/sync {"sync_type": "full" | "incremental"}`
+
+2. **FastAPI route handler** invokes `SyncService.start()`
+   - Creates a new `sync_run` row in SQLite with status `"running"`
+   - Spawns an async background task
+
+3. **GraphExportService** (the core engine) executes one of two paths:
+
+   **Path A: Full Sync**
+   - `GET /users` with `$select=...&$expand=manager($select=id)`
+   - `GET /groups` with deterministic column ordering
+   - `GET /groups/{id}/members` + `GET /groups/{id}/owners` (concurrent fetches, 4 by default)
+   - `GET /directoryRoles` → `GET /directoryRoles/{id}/members`
+   - Stores delta tokens for future incremental syncs
+   - Writes all five raw CSV files + 8 OpenText IG collection files
+
+   **Path B: Incremental Sync**
+   - Checks if delta tokens exist; falls back to full sync if missing
+   - `GET /users/delta?$deltatoken=<token>`
+   - `GET /groups/delta?$deltatoken=<token>`
+   - **Merges** the delta response (adds/updates/deletes) into the latest CSV
+   - Re-fetches all group/role memberships for accuracy
+   - Stores new delta tokens
+
+4. **Data Sanitization**
+   - Carriage returns and line feeds are stripped from all values
+   - Null Entra attributes are replaced with empty strings
+   - Values are deterministically ordered (same column sequence every run)
+
+5. **CSV Output**
+   - Exports written to `/data/exports/<run_id>/`
+   - `latest/` folder updated to reflect most recent run
+   - Derived OpenText IG files generated from raw data
+
+6. **Resilience**
+   - Microsoft Graph throttling (`HTTP 429`) → exponential backoff retries (up to 5 attempts, 32s max delay)
+   - Pagination handled via native `PageIterator`
+   - Delta tokens can expire (`HTTP 410`) → automatic fallback to full sync
+
+7. **Update DB**
+   - Mark `sync_run` row as completed with counts (users, groups, etc.)
+   - Store latest delta tokens for next incremental sync
 
 ### Sync type decision flow
 
@@ -230,7 +288,7 @@ The following Microsoft Graph attributes are requested on each sync. Null values
 
 ### Group members and owners (`/groups/{id}/members`, `/groups/{id}/owners`)
 
-Only `id` is selected from each member / owner object. Only `#microsoft.graph.user` objects contribute to user membership and owner lists. `#microsoft.graph.group` objects are captured separately to populate the nested-group parent-child relationship file.
+Only `id` is selected from each member / owner object. Only `#microsoft.graph.user` objects contribute to user membership and owner lists. `#microsoft.graph.group` objects are captured separately as nested group relationships.
 
 ### Directory Roles (`/directoryRoles` — `$select`)
 
@@ -291,7 +349,7 @@ Columns:
 Raw Entra group attributes — one row per group.
 
 Columns:
-`id,displayName,description,securityEnabled,mailEnabled,mailNickname`
+`id,displayName,description,securityEnabled,mailEnabled,mailNickname,onPremisesObjectIdentifier,onPremisesDistinguishedName`
 
 | Column | Entra ID source |
 |---|---|
@@ -301,6 +359,8 @@ Columns:
 | `securityEnabled` | `securityEnabled` |
 | `mailEnabled` | `mailEnabled` |
 | `mailNickname` | `mailNickname` |
+| `onPremisesObjectIdentifier` | `onPremisesObjectIdentifier` |
+| `onPremisesDistinguishedName` | `onPremisesDistinguishedName` |
 
 ### memberships.csv
 
@@ -537,6 +597,62 @@ entra-ig/
 └── pyproject.toml
 ```
 
+## Docker construction
+
+### Multi-stage build
+
+The Dockerfile uses a two-stage build strategy to minimize the final image size:
+
+**Stage 1: Frontend Build (Node 24)**
+```dockerfile
+FROM node:24-bookworm-slim AS frontend-build
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build          # Builds React → /app/frontend/dist
+```
+
+**Stage 2: Runtime (Python 3.12-slim)**
+```dockerfile
+FROM python:3.12-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY backend ./backend
+RUN pip install --no-cache-dir .  # Installs dependencies from pyproject.toml
+
+# Copy built React assets from Stage 1
+COPY --from=frontend-build /app/frontend/dist ./frontend/dist
+
+EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "app.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### Key Docker details
+
+- **Multi-stage advantage**: Node dependencies discarded after build; final image contains only Python runtime + compiled React
+- **Final image base**: `python:3.12-slim` (~150 MB lean base)
+- **Final image size**: Approximately 200-250 MB with all dependencies
+- **Volumes** (typically mounted at runtime):
+  - `/app/data` — CSV exports, SQLite database
+  - `/app/logs` — Application logs
+- **Port**: 8000 (FastAPI + static frontend)
+- **Environment-driven**: All Entra credentials, Graph scope, retry settings, and paths configured via `.env` or environment variables
+- **Python optimization**: `PYTHONDONTWRITEBYTECODE=1` and `PYTHONUNBUFFERED=1` for faster startup and clean logs
+
+### Dependencies
+
+```toml
+aiosqlite>=0.22.0,<1.0.0     # Async SQLite wrapper
+azure-identity>=1.25.0,<2.0.0  # ClientSecretCredential for OAuth2
+fastapi>=0.136.0,<1.0.0      # Web framework
+msgraph-sdk>=1.58.0,<2.0.0   # Microsoft Graph Python client
+pydantic-settings>=2.14.0,<3.0.0  # Config validation/loading
+uvicorn>=0.49.0,<1.0.0       # ASGI server
+```
+
 ## Local development
 
 ### Backend
@@ -613,3 +729,35 @@ docker run --rm -p 8000:8000 --env-file .env \
 ## CI/CD
 
 A GitHub Actions workflow (`.github/workflows/docker.yml`) builds and publishes the Docker image to GHCR on every push to `main`. The image is tagged `latest`.
+
+## Key features
+
+✅ **Production-Ready**
+- Async/await throughout (non-blocking I/O)
+- Exponential backoff for Graph throttling
+- Delta query support for incremental exports (only export changes)
+- Rotating log files with configurable verbosity
+- Automatic scheduling with UI controls
+- Health checks and connection validation
+
+✅ **Data Quality**
+- Deterministic column ordering (reproducible diffs across runs)
+- Null handling (empty strings instead of nulls for CSV safety)
+- Line-feed/carriage-return sanitization to prevent broken CSV ingestion
+- Validates Entra credentials before export
+- Counts and timestamps on all exports
+
+✅ **Admin Console**
+- React UI for triggering syncs (full/incremental)
+- Live progress counters (users fetched, throttle events, etc.)
+- Log viewer and truncation
+- Configurable auto-refresh schedule
+- Connection tester to validate credentials
+- Run history with delete capability
+
+✅ **OpenText IG Compatible**
+- Derives 8 specialized IG collection formats from raw Entra data
+- Maps Entra attributes to OpenText schema (e.g., `employeeId` → `hrEmpNumber`)
+- Supports privilege detection (users with roles = privileged flag)
+- Handles nested groups and role hierarchies
+- Exports both raw Entra data and transformed IG collection formats
