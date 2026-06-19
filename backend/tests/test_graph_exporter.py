@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import logging
 from types import SimpleNamespace
 
 from app.config import Settings
@@ -474,3 +475,167 @@ def test_iterate_collection_returns_delta_link_from_additional_data_on_last_page
 
     assert delta_link == 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=fromadditional'
     assert collected == ['item1', 'item2']
+
+
+class FakeAPIError(graph_exporter.APIError):
+    def __init__(self, status_code: int):
+        super().__init__('test error')
+        self.response_status_code = status_code
+
+
+class PassthroughExporter(GraphExportService):
+    async def _run_with_retry(self, operation, *, operation_name, progress=None):
+        return await operation()
+
+    async def _iterate_collection(self, response, client, callback, *, operation_name, progress=None):
+        for item in getattr(response, 'value', []):
+            callback(item)
+        return None
+
+
+def test_fetch_memberships_ignores_404_and_logs_other_exceptions(caplog) -> None:
+    class FakeMembers:
+        def __init__(self, group_id: str):
+            self.group_id = group_id
+
+        async def get(self, *, request_configuration):
+            if self.group_id == 'missing':
+                raise FakeAPIError(404)
+            if self.group_id == 'boom':
+                raise RuntimeError('membership boom')
+            return SimpleNamespace(value=[SimpleNamespace(id='user-1', odata_type='#microsoft.graph.user')])
+
+    class FakeGroup:
+        def __init__(self, group_id: str):
+            self.members = FakeMembers(group_id)
+
+    class FakeGroups:
+        def by_group_id(self, group_id: str):
+            return FakeGroup(group_id)
+
+    class FakeClient:
+        groups = FakeGroups()
+
+    exporter = PassthroughExporter(Settings())
+    with caplog.at_level(logging.WARNING, logger=graph_exporter.LOGGER_NAME):
+        rows = asyncio.run(
+            exporter._fetch_memberships(
+                FakeClient(),
+                [{'id': 'ok'}, {'id': 'missing'}, {'id': 'boom'}],
+            )
+        )
+
+    assert rows == [{'group_id': 'ok', 'user_id': 'user-1'}]
+    assert any('skipping memberships fetch' in message for message in caplog.messages)
+    assert any('Unexpected exception while fetching memberships' in message for message in caplog.messages)
+
+
+def test_fetch_group_owners_ignores_404_and_logs_other_exceptions(caplog) -> None:
+    class FakeOwners:
+        def __init__(self, group_id: str):
+            self.group_id = group_id
+
+        async def get(self):
+            if self.group_id == 'missing':
+                raise FakeAPIError(404)
+            if self.group_id == 'boom':
+                raise RuntimeError('owner boom')
+            return SimpleNamespace(value=[SimpleNamespace(id='owner-1', odata_type='#microsoft.graph.user')])
+
+    class FakeGroup:
+        def __init__(self, group_id: str):
+            self.owners = FakeOwners(group_id)
+
+    class FakeGroups:
+        def by_group_id(self, group_id: str):
+            return FakeGroup(group_id)
+
+    class FakeClient:
+        groups = FakeGroups()
+
+    exporter = PassthroughExporter(Settings())
+    with caplog.at_level(logging.WARNING, logger=graph_exporter.LOGGER_NAME):
+        owners = asyncio.run(
+            exporter._fetch_group_owners(
+                FakeClient(),
+                [{'id': 'ok'}, {'id': 'missing'}, {'id': 'boom'}],
+            )
+        )
+
+    assert owners == {'ok': ['owner-1']}
+    assert any('skipping owners fetch' in message for message in caplog.messages)
+    assert any('Unexpected exception while fetching group owners' in message for message in caplog.messages)
+
+
+def test_fetch_nested_groups_ignores_404_and_logs_other_exceptions(caplog) -> None:
+    class FakeMembers:
+        def __init__(self, group_id: str):
+            self.group_id = group_id
+
+        async def get(self, *, request_configuration):
+            if self.group_id == 'missing':
+                raise FakeAPIError(404)
+            if self.group_id == 'boom':
+                raise RuntimeError('nested boom')
+            return SimpleNamespace(value=[SimpleNamespace(id='child-1', odata_type='#microsoft.graph.group')])
+
+    class FakeGroup:
+        def __init__(self, group_id: str):
+            self.members = FakeMembers(group_id)
+
+    class FakeGroups:
+        def by_group_id(self, group_id: str):
+            return FakeGroup(group_id)
+
+    class FakeClient:
+        groups = FakeGroups()
+
+    exporter = PassthroughExporter(Settings())
+    with caplog.at_level(logging.WARNING, logger=graph_exporter.LOGGER_NAME):
+        nested = asyncio.run(
+            exporter._fetch_nested_groups(
+                FakeClient(),
+                [{'id': 'ok'}, {'id': 'missing'}, {'id': 'boom'}],
+            )
+        )
+
+    assert nested == [{'parentId': 'ok', 'childId': 'child-1'}]
+    assert any('skipping nested groups fetch' in message for message in caplog.messages)
+    assert any('Unexpected exception while fetching nested groups' in message for message in caplog.messages)
+
+
+def test_fetch_role_memberships_ignores_404_and_logs_other_exceptions(caplog) -> None:
+    class FakeMembers:
+        def __init__(self, role_id: str):
+            self.role_id = role_id
+
+        async def get(self, *, request_configuration):
+            if self.role_id == 'missing':
+                raise FakeAPIError(404)
+            if self.role_id == 'boom':
+                raise RuntimeError('role membership boom')
+            return SimpleNamespace(value=[SimpleNamespace(id='user-1', odata_type='#microsoft.graph.user')])
+
+    class FakeRole:
+        def __init__(self, role_id: str):
+            self.members = FakeMembers(role_id)
+
+    class FakeDirectoryRoles:
+        def by_directory_role_id(self, role_id: str):
+            return FakeRole(role_id)
+
+    class FakeClient:
+        directory_roles = FakeDirectoryRoles()
+
+    exporter = PassthroughExporter(Settings())
+    with caplog.at_level(logging.WARNING, logger=graph_exporter.LOGGER_NAME):
+        rows = asyncio.run(
+            exporter._fetch_role_memberships(
+                FakeClient(),
+                [{'id': 'ok'}, {'id': 'missing'}, {'id': 'boom'}],
+            )
+        )
+
+    assert rows == [{'role_id': 'ok', 'user_id': 'user-1'}]
+    assert any('skipping role memberships fetch' in message for message in caplog.messages)
+    assert any('Unexpected exception while fetching role memberships' in message for message in caplog.messages)

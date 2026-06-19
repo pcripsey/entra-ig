@@ -677,13 +677,19 @@ class GraphExportService:
                         top=self._settings.graph_page_size,
                     )
                 )
-                response = await self._run_with_retry(
-                    lambda: client.groups.by_group_id(group_id).members.get(
-                        request_configuration=request_configuration,
-                    ),
-                    operation_name=f'fetch memberships for {group_id}',
-                    progress=progress,
-                )
+                try:
+                    response = await self._run_with_retry(
+                        lambda: client.groups.by_group_id(group_id).members.get(
+                            request_configuration=request_configuration,
+                        ),
+                        operation_name=f'fetch memberships for {group_id}',
+                        progress=progress,
+                    )
+                except APIError as exc:
+                    if getattr(exc, 'response_status_code', None) == 404:
+                        self._logger.warning('Group %s no longer exists; skipping memberships fetch', group_id)
+                        return
+                    raise
                 if response is None:
                     return
 
@@ -710,7 +716,11 @@ class GraphExportService:
                 )
                 self._logger.debug('Processed group membership page set for %s', group_id)
 
-        await asyncio.gather(*(collect_group_members(group) for group in groups))
+        results = await asyncio.gather(*(collect_group_members(group) for group in groups), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                # Keep processing the remaining resources; one failure must not abort the full export.
+                self._logger.error('Unexpected exception while fetching memberships: %r', result)
 
         rows = [
             {'group_id': group_id, 'user_id': user_id}
@@ -728,11 +738,17 @@ class GraphExportService:
         async def collect_group_owners(group: dict[str, str]) -> None:
             async with semaphore:
                 group_id = group['id']
-                response = await self._run_with_retry(
-                    lambda: client.groups.by_group_id(group_id).owners.get(),
-                    operation_name=f'fetch owners for {group_id}',
-                    progress=progress,
-                )
+                try:
+                    response = await self._run_with_retry(
+                        lambda: client.groups.by_group_id(group_id).owners.get(),
+                        operation_name=f'fetch owners for {group_id}',
+                        progress=progress,
+                    )
+                except APIError as exc:
+                    if getattr(exc, 'response_status_code', None) == 404:
+                        self._logger.warning('Group %s no longer exists; skipping owners fetch', group_id)
+                        return
+                    raise
                 if response is None:
                     return
 
@@ -756,7 +772,11 @@ class GraphExportService:
                 )
                 owners_map[group_id] = sorted(set(owner_ids))
 
-        await asyncio.gather(*(collect_group_owners(group) for group in groups))
+        results = await asyncio.gather(*(collect_group_owners(group) for group in groups), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                # Keep processing the remaining resources; one failure must not abort the full export.
+                self._logger.error('Unexpected exception while fetching group owners: %r', result)
         return owners_map
 
     async def _fetch_nested_groups(
@@ -775,13 +795,19 @@ class GraphExportService:
                         top=self._settings.graph_page_size,
                     )
                 )
-                response = await self._run_with_retry(
-                    lambda: client.groups.by_group_id(group_id).members.get(
-                        request_configuration=request_configuration,
-                    ),
-                    operation_name=f'fetch nested groups for {group_id}',
-                    progress=progress,
-                )
+                try:
+                    response = await self._run_with_retry(
+                        lambda: client.groups.by_group_id(group_id).members.get(
+                            request_configuration=request_configuration,
+                        ),
+                        operation_name=f'fetch nested groups for {group_id}',
+                        progress=progress,
+                    )
+                except APIError as exc:
+                    if getattr(exc, 'response_status_code', None) == 404:
+                        self._logger.warning('Group %s no longer exists; skipping nested groups fetch', group_id)
+                        return
+                    raise
                 if response is None:
                     return
 
@@ -802,7 +828,11 @@ class GraphExportService:
                     progress=progress,
                 )
 
-        await asyncio.gather(*(collect_group_children(group) for group in groups))
+        results = await asyncio.gather(*(collect_group_children(group) for group in groups), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                # Keep processing the remaining resources; one failure must not abort the full export.
+                self._logger.error('Unexpected exception while fetching nested groups: %r', result)
         return [{'parentId': parent_id, 'childId': child_id} for parent_id, child_id in sorted(nesting_pairs)]
 
     async def _fetch_roles(self, client: GraphServiceClient, progress: LiveProgress | None = None) -> list[dict[str, str]]:
@@ -845,13 +875,19 @@ class GraphExportService:
                         select=['id'],
                     )
                 )
-                response = await self._run_with_retry(
-                    lambda: client.directory_roles.by_directory_role_id(role_id).members.get(
-                        request_configuration=request_configuration,
-                    ),
-                    operation_name=f'fetch role memberships for {role_id}',
-                    progress=progress,
-                )
+                try:
+                    response = await self._run_with_retry(
+                        lambda: client.directory_roles.by_directory_role_id(role_id).members.get(
+                            request_configuration=request_configuration,
+                        ),
+                        operation_name=f'fetch role memberships for {role_id}',
+                        progress=progress,
+                    )
+                except APIError as exc:
+                    if getattr(exc, 'response_status_code', None) == 404:
+                        self._logger.warning('Role %s no longer exists; skipping role memberships fetch', role_id)
+                        return
+                    raise
                 if response is None:
                     return
 
@@ -875,7 +911,11 @@ class GraphExportService:
                 )
                 self._logger.debug('Processed role membership page set for %s', role_id)
 
-        await asyncio.gather(*(collect_role_members(role) for role in roles))
+        results = await asyncio.gather(*(collect_role_members(role) for role in roles), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                # Keep processing the remaining resources; one failure must not abort the full export.
+                self._logger.error('Unexpected exception while fetching role memberships: %r', result)
 
         rows = [
             {'role_id': role_id, 'user_id': user_id}
