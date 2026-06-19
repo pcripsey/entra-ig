@@ -719,6 +719,7 @@ class GraphExportService:
         results = await asyncio.gather(*(collect_group_members(group) for group in groups), return_exceptions=True)
         for result in results:
             if isinstance(result, BaseException):
+                # Keep processing the remaining resources; one failure must not abort the full export.
                 self._logger.error('Unexpected exception while fetching memberships: %r', result)
 
         rows = [
@@ -774,6 +775,7 @@ class GraphExportService:
         results = await asyncio.gather(*(collect_group_owners(group) for group in groups), return_exceptions=True)
         for result in results:
             if isinstance(result, BaseException):
+                # Keep processing the remaining resources; one failure must not abort the full export.
                 self._logger.error('Unexpected exception while fetching group owners: %r', result)
         return owners_map
 
@@ -829,6 +831,7 @@ class GraphExportService:
         results = await asyncio.gather(*(collect_group_children(group) for group in groups), return_exceptions=True)
         for result in results:
             if isinstance(result, BaseException):
+                # Keep processing the remaining resources; one failure must not abort the full export.
                 self._logger.error('Unexpected exception while fetching nested groups: %r', result)
         return [{'parentId': parent_id, 'childId': child_id} for parent_id, child_id in sorted(nesting_pairs)]
 
@@ -911,6 +914,7 @@ class GraphExportService:
         results = await asyncio.gather(*(collect_role_members(role) for role in roles), return_exceptions=True)
         for result in results:
             if isinstance(result, BaseException):
+                # Keep processing the remaining resources; one failure must not abort the full export.
                 self._logger.error('Unexpected exception while fetching role memberships: %r', result)
 
         rows = [

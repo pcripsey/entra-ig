@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from app.services.graph_exporter import LiveProgress
 from app.services.sync_service import SyncService
@@ -17,7 +18,9 @@ def test_failed_sync_records_failed_stage() -> None:
             self.update_calls.append(payload)
 
     class FakeExporter:
-        async def export(self, run_id: str, *, sync_type: str, run_store, progress):
+        async def export(
+            self, run_id: str, *, sync_type: str, run_store: Any, progress: LiveProgress
+        ) -> None:
             raise RuntimeError('boom')
 
     run_store = FakeRunStore()

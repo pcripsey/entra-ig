@@ -477,7 +477,7 @@ def test_iterate_collection_returns_delta_link_from_additional_data_on_last_page
     assert collected == ['item1', 'item2']
 
 
-class FakeApiError(graph_exporter.APIError):
+class FakeAPIError(graph_exporter.APIError):
     def __init__(self, status_code: int):
         super().__init__('test error')
         self.response_status_code = status_code
@@ -500,7 +500,7 @@ def test_fetch_memberships_ignores_404_and_logs_other_exceptions(caplog) -> None
 
         async def get(self, *, request_configuration):
             if self.group_id == 'missing':
-                raise FakeApiError(404)
+                raise FakeAPIError(404)
             if self.group_id == 'boom':
                 raise RuntimeError('membership boom')
             return SimpleNamespace(value=[SimpleNamespace(id='user-1', odata_type='#microsoft.graph.user')])
@@ -517,7 +517,7 @@ def test_fetch_memberships_ignores_404_and_logs_other_exceptions(caplog) -> None
         groups = FakeGroups()
 
     exporter = PassthroughExporter(Settings())
-    with caplog.at_level(logging.WARNING, logger=exporter._logger.name):
+    with caplog.at_level(logging.WARNING, logger=graph_exporter.LOGGER_NAME):
         rows = asyncio.run(
             exporter._fetch_memberships(
                 FakeClient(),
@@ -537,7 +537,7 @@ def test_fetch_group_owners_ignores_404_and_logs_other_exceptions(caplog) -> Non
 
         async def get(self):
             if self.group_id == 'missing':
-                raise FakeApiError(404)
+                raise FakeAPIError(404)
             if self.group_id == 'boom':
                 raise RuntimeError('owner boom')
             return SimpleNamespace(value=[SimpleNamespace(id='owner-1', odata_type='#microsoft.graph.user')])
@@ -554,7 +554,7 @@ def test_fetch_group_owners_ignores_404_and_logs_other_exceptions(caplog) -> Non
         groups = FakeGroups()
 
     exporter = PassthroughExporter(Settings())
-    with caplog.at_level(logging.WARNING, logger=exporter._logger.name):
+    with caplog.at_level(logging.WARNING, logger=graph_exporter.LOGGER_NAME):
         owners = asyncio.run(
             exporter._fetch_group_owners(
                 FakeClient(),
@@ -574,7 +574,7 @@ def test_fetch_nested_groups_ignores_404_and_logs_other_exceptions(caplog) -> No
 
         async def get(self, *, request_configuration):
             if self.group_id == 'missing':
-                raise FakeApiError(404)
+                raise FakeAPIError(404)
             if self.group_id == 'boom':
                 raise RuntimeError('nested boom')
             return SimpleNamespace(value=[SimpleNamespace(id='child-1', odata_type='#microsoft.graph.group')])
@@ -591,7 +591,7 @@ def test_fetch_nested_groups_ignores_404_and_logs_other_exceptions(caplog) -> No
         groups = FakeGroups()
 
     exporter = PassthroughExporter(Settings())
-    with caplog.at_level(logging.WARNING, logger=exporter._logger.name):
+    with caplog.at_level(logging.WARNING, logger=graph_exporter.LOGGER_NAME):
         nested = asyncio.run(
             exporter._fetch_nested_groups(
                 FakeClient(),
@@ -611,7 +611,7 @@ def test_fetch_role_memberships_ignores_404_and_logs_other_exceptions(caplog) ->
 
         async def get(self, *, request_configuration):
             if self.role_id == 'missing':
-                raise FakeApiError(404)
+                raise FakeAPIError(404)
             if self.role_id == 'boom':
                 raise RuntimeError('role membership boom')
             return SimpleNamespace(value=[SimpleNamespace(id='user-1', odata_type='#microsoft.graph.user')])
@@ -628,7 +628,7 @@ def test_fetch_role_memberships_ignores_404_and_logs_other_exceptions(caplog) ->
         directory_roles = FakeDirectoryRoles()
 
     exporter = PassthroughExporter(Settings())
-    with caplog.at_level(logging.WARNING, logger=exporter._logger.name):
+    with caplog.at_level(logging.WARNING, logger=graph_exporter.LOGGER_NAME):
         rows = asyncio.run(
             exporter._fetch_role_memberships(
                 FakeClient(),
