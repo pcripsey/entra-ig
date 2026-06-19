@@ -48,6 +48,7 @@ class RunStore:
                     roles_file TEXT,
                     role_memberships_file TEXT,
                     error TEXT,
+                    failed_stage TEXT,
                     sync_type TEXT NOT NULL DEFAULT 'full'
                 )
                 '''
@@ -55,6 +56,13 @@ class RunStore:
             # Migrate existing installs that lack the sync_type column
             try:
                 await db.execute("ALTER TABLE sync_runs ADD COLUMN sync_type TEXT NOT NULL DEFAULT 'full'")
+            except aiosqlite.OperationalError as exc:
+                if 'duplicate column name' not in str(exc).lower():
+                    raise
+
+            # Migrate existing installs that lack the failed_stage column
+            try:
+                await db.execute('ALTER TABLE sync_runs ADD COLUMN failed_stage TEXT')
             except aiosqlite.OperationalError as exc:
                 if 'duplicate column name' not in str(exc).lower():
                     raise

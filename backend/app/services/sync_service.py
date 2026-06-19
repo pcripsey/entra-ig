@@ -149,6 +149,7 @@ class SyncService:
                 status='failed',
                 completed_at=datetime.now(timezone.utc).isoformat(),
                 error=str(exc),
+                failed_stage=progress.stage,
             )
         finally:
             self._active_run_id = None
