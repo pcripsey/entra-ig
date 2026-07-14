@@ -32,13 +32,19 @@ type SyncRunResponse = {
   users_count: number | null
   groups_count: number | null
   memberships_count: number | null
-  roles_count?: number | null
-  role_memberships_count?: number | null
-  users_file: string | null
-  groups_file: string | null
-  memberships_file: string | null
-  roles_file?: string | null
-  role_memberships_file?: string | null
+  roles_count: number | null
+  role_memberships_count: number | null
+  nested_groups_count: number | null
+  identity_file: string | null
+  account_file: string | null
+  group_file: string | null
+  group_membership_file: string | null
+  parent_child_group_file: string | null
+  permission_file: string | null
+  holder_to_permission_file: string | null
+  permission_to_holder_file: string | null
+  permission_hierarchy_cp_file: string | null
+  permission_hierarchy_pc_file: string | null
   error: string | null
 }
 
@@ -604,13 +610,14 @@ function App() {
                   <th>Memberships</th>
                   <th>Roles</th>
                   <th>Role memberships</th>
+                  <th>Nested groups</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {runs.length === 0 ? (
                   <tr>
-                    <td colSpan={11}>No sync runs recorded.</td>
+                    <td colSpan={12}>No sync runs recorded.</td>
                   </tr>
                 ) : (
                   runs.map((run) => (
@@ -625,6 +632,7 @@ function App() {
                       <td>{run.memberships_count ?? '—'}</td>
                       <td>{run.roles_count ?? '—'}</td>
                       <td>{run.role_memberships_count ?? '—'}</td>
+                      <td>{run.nested_groups_count ?? '—'}</td>
                       <td>
                         <button
                           className="secondary-action"
@@ -650,24 +658,44 @@ function App() {
           </div>
           <dl className="detail-list compact">
             <div>
-              <dt>Users CSV</dt>
-              <dd>{status?.latest_run?.users_file ?? 'Awaiting first export'}</dd>
+              <dt>Identity CSV</dt>
+              <dd>{status?.latest_run?.identity_file ?? 'Awaiting first export'}</dd>
             </div>
             <div>
-              <dt>Groups CSV</dt>
-              <dd>{status?.latest_run?.groups_file ?? 'Awaiting first export'}</dd>
+              <dt>Account CSV</dt>
+              <dd>{status?.latest_run?.account_file ?? 'Awaiting first export'}</dd>
             </div>
             <div>
-              <dt>Memberships CSV</dt>
-              <dd>{status?.latest_run?.memberships_file ?? 'Awaiting first export'}</dd>
+              <dt>Group CSV</dt>
+              <dd>{status?.latest_run?.group_file ?? 'Awaiting first export'}</dd>
             </div>
             <div>
-              <dt>Roles CSV</dt>
-              <dd>{status?.latest_run?.roles_file ?? 'Awaiting first export'}</dd>
+              <dt>Group membership CSV</dt>
+              <dd>{status?.latest_run?.group_membership_file ?? 'Awaiting first export'}</dd>
             </div>
             <div>
-              <dt>Role memberships CSV</dt>
-              <dd>{status?.latest_run?.role_memberships_file ?? 'Awaiting first export'}</dd>
+              <dt>Parent–child group CSV</dt>
+              <dd>{status?.latest_run?.parent_child_group_file ?? 'Awaiting first export'}</dd>
+            </div>
+            <div>
+              <dt>Permission CSV</dt>
+              <dd>{status?.latest_run?.permission_file ?? 'Awaiting first export'}</dd>
+            </div>
+            <div>
+              <dt>Holder-to-permission CSV</dt>
+              <dd>{status?.latest_run?.holder_to_permission_file ?? 'Awaiting first export'}</dd>
+            </div>
+            <div>
+              <dt>Permission-to-holder CSV</dt>
+              <dd>{status?.latest_run?.permission_to_holder_file ?? 'Awaiting first export'}</dd>
+            </div>
+            <div>
+              <dt>Permission hierarchy (CP) CSV</dt>
+              <dd>{status?.latest_run?.permission_hierarchy_cp_file ?? 'Awaiting first export'}</dd>
+            </div>
+            <div>
+              <dt>Permission hierarchy (PC) CSV</dt>
+              <dd>{status?.latest_run?.permission_hierarchy_pc_file ?? 'Awaiting first export'}</dd>
             </div>
             <div>
               <dt>Last error</dt>
